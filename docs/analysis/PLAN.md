@@ -130,66 +130,107 @@ oggi c'è ancora un solo `apiBaseURL` + una sola `apiKey` condivisi
 tag Gemma 4). Tieni transcription su Groq. Detta qualcosa. Deve funzionare e il
 log di Groq deve mostrare SOLO chiamate Whisper, zero `/chat/completions`.
 
-### Step 2 — Whisper locale (1 giornata)
+### Step 2 — Whisper locale via WhisperKit
 
-Due strade, in ordine di preferenza:
+Lo Step 2 è spezzato in due sotto-step per applicare la regola dei test
+automatici (ogni cambio significativo con test prima del merge).
 
-**Opzione A (consigliata): WhisperKit di Argmax** — Swift-native, Apple-ottimizzato,
-API pulita, modelli mlcompute/ANE, gira su Apple Silicon e Intel.
-- Repo: https://github.com/argmaxinc/WhisperKit
-- Aggiungerlo come Swift Package dependency
-- Sostituire l'implementazione interna di `TranscriptionService.transcribe(fileURL:)`
-  con `WhisperKit.transcribe(audioPath:)` quando `transcriptionBaseURL == "local://whisperkit"`
-  (o analogo sentinel)
-- Al primo run, scarica il modello scelto (`large-v3-turbo` o `medium`) in `Application Support/`
+**Scelta runtime: WhisperKit** (non whisper.cpp). Motivazione nella memoria
+progetto `intel_support_dropped.md`: abbiamo deciso di non supportare Mac
+Intel (piattaforma sunset — macOS 27 del 2026 è Apple Silicon only), quindi
+il vantaggio "universale" di whisper.cpp decade. WhisperKit è un Swift
+Package pulito, ottimizzato per ANE/Apple Silicon, integrazione in ore
+invece di giorni.
 
-**Opzione B: whisper.cpp via binding** — più lavoro (bundle binario, gestione
-path), ma totale controllo. Da valutare solo se WhisperKit ha problemi con
-italiano.
+Conseguenza: il target minimo dell'app diventa **macOS 13 su Apple Silicon**.
+Intel esplicitamente non supportato; da dichiarare nel README.
 
-Implementazione:
+#### Step 2a — Backend protocol refactor (1-2h, zero dipendenze nuove)
 
-1. Aggiungere WhisperKit al progetto:
-   - Se è SwiftPM: aggiungere al `Package.swift`
-   - Se è Xcode project: File → Add Packages → URL repo
+Obiettivo: introdurre l'astrazione `TranscriptionBackend` senza toccare il
+build system né aggiungere deps. Safe refactor fully tested.
 
-2. Refactoring `TranscriptionService`:
-   - Introdurre un protocol `TranscriptionBackend` con metodo `transcribe(url:) async throws -> String`
-   - Due implementazioni: `GroqTranscriptionBackend` (l'attuale) e `WhisperKitTranscriptionBackend` (nuova)
-   - `TranscriptionService` sceglie il backend in base a `transcriptionBaseURL`
+Lavoro:
 
-3. UI: in Settings, aggiungere toggle "Use local transcription (WhisperKit)"
-   con dropdown modello (Turbo / Medium / Small).
+1. Nuovo file [Sources/TranscriptionBackend.swift](../../Sources/TranscriptionBackend.swift):
+   - Protocol `TranscriptionBackend { func transcribe(fileURL: URL) async throws -> String }`
+   - Eventuali tipi di supporto (es. `TranscriptionBackendError`)
 
-4. First-run UX: se locale, mostrare un pop-up "Scaricamento modello Whisper
-   (~1.5GB)" con progress bar. Modello in `~/Library/Application Support/geMMaFloW/models/`.
+2. Refactor di [TranscriptionService.swift](../../Sources/TranscriptionService.swift):
+   - Estrarre la logica HTTP corrente in `RemoteOpenAITranscriptionBackend` (implementa il protocol)
+   - `TranscriptionService` diventa un thin factory/coordinator: sceglie il backend in base al sentinel del `transcriptionBaseURL` (es. `local://whisperkit` → futuro WhisperKitBackend, tutto il resto → RemoteOpenAI)
+   - Mantiene l'API pubblica esistente (`init`, `transcribe(fileURL:)`, `validateAPIKey`)
 
-**Test**: disabilita rete o metti firewall. Detta. Deve funzionare.
-Verifica qualità italiano con frasi tecniche — se Turbo non basta, provare Medium.
+3. Test (`Tests/FreeFlowCoreTests/`):
+   - Backend selection: sentinel `local://` → LocalBackend (stub)
+   - Backend selection: URL http → RemoteOpenAIBackend
+   - Hallucination filter: isolato in una helper testabile, input fisso → output atteso
+   - `normalizedBaseURL` edge cases
+   - Verifica che `transcribe` propaghi gli errori del backend
 
-### Step 3 — Bundle LLM locale con llama.cpp (2-3 giorni)
+**Criterio di successo**: tutti i test vecchi passano + tests nuovi verdi + `make` builda senza warning.
+
+#### Step 2b — WhisperKit integration (1 giornata)
+
+Pre-requisito: 2a committato e mergato.
+
+Lavoro:
+
+1. **Build system**: aggiungere WhisperKit a `Package.swift`. Migrare `make` a invocare `swift build -c release` sotto il cofano (con universal build arm64-only). Fallback: se troppo complesso, lasciare il Makefile con swiftc + linkare manualmente il framework WhisperKit prodotto via `swift build`. Decisione finale in base a quello che SwiftPM produce realmente.
+
+2. **WhisperKit backend**: [Sources/WhisperKitBackend.swift](../../Sources/WhisperKitBackend.swift) che implementa `TranscriptionBackend`.
+   - Chiama `WhisperKit.transcribe(audioPath:)` e ritorna la stringa
+   - Gestisce il lazy-load del modello al primo uso
+   - Cancellation-aware (rispetta `Task.isCancelled`)
+
+3. **Attivazione**: sentinel `transcriptionBaseURL = "local://whisperkit"` → usa `WhisperKitBackend`. Oppure preset "WhisperKit locale" nella UI override (aggiunto in Step 1).
+
+4. **Model management**:
+   - Modello in `~/Library/Application Support/geMMaFloW/models/whisper/`
+   - Default `large-v3-turbo` (velocità/qualità equilibrati per Apple Silicon)
+   - First-run: dialogo "Download modello Whisper (~1.5GB)" con progress bar
+   - Selettore modello (Turbo/Medium/Small) in Settings
+
+5. **Test**:
+   - Unit: il backend chiama l'API WhisperKit corretta (mockato)
+   - Integration (manuale): rete disconnessa + WhisperKit attivo → dettatura italiana funziona. Qualità su 20-30 frasi tecniche.
+
+**Criterio di successo**: `swift test` verde + dettatura reale funziona offline con Whisper large-v3-turbo.
+
+### Step 3 — Bundle LLM locale (2-3 giorni)
 
 Obiettivo: eliminare la dipendenza esterna da Ollama per l'utente finale. L'app
 deve essere "download and go" — zero setup manuale di runtime LLM.
 
-**Scelta runtime: llama.cpp** (non MLX Swift). Motivo: llama.cpp supporta universal
-binary (arm64 + Intel), mentre MLX è arm64-only. I Mac Intel 2018-2022 sono ancora
-in circolazione e non vogliamo escluderli. Vedi memoria progetto
-`llm_runtime_choice.md`.
+**Scelta runtime: da rivalutare all'inizio dello Step 3.** In seguito alla
+decisione di droppare il supporto Intel (vedi `intel_support_dropped.md`), il
+vincolo che portava a llama.cpp (universal binary) è caduto. Le due opzioni
+tornano in gioco:
 
-Lavoro:
+- **llama.cpp**: maturo, GGUF standard, community ampia, primi a supportare
+  nuovi modelli. C-interop più lavoro.
+- **MLX Swift**: Apple-nativo, arm64-only (ok per noi ora), Swift puro più
+  pulito, integrazione più veloce, tuning esplicito per Apple Silicon/ANE.
 
-1. **Integrazione llama.cpp**:
-   - Swift Package (llama.cpp ha SwiftPM nativo dalle release recenti) oppure
-     wrapper esistente (es. `LLM.swift` di eastriverlee)
-   - Compilazione con Metal per GPU Apple Silicon + CPU fallback per Intel
-   - Verificare support Gemma 4 in llama.cpp (uscita modello 2026-04-02; llama.cpp
-     è solitamente tra i primi a supportare nuovi Gemma)
+Vantaggio MLX Swift: consistenza stile con WhisperKit (entrambi Swift-native,
+entrambi arm64-only, entrambi Apple-tuned). Svantaggio MLX: più giovane, meno
+battuto in produzione.
 
-2. **Abstracting del backend LLM**:
+Da decidere quando si arriva qui, basandosi su: (1) stato di supporto Gemma 4
+in entrambi i runtime al momento dello Step 3, (2) facilità di integrazione
+concreta (fare un PoC di 2 ore per ciascuno), (3) qualità output.
+
+Lavoro (indipendente dal runtime scelto):
+
+1. **Integrazione runtime scelto**:
+   - Swift Package o wrapper esistente
+   - Metal/ANE acceleration su Apple Silicon (gratis con entrambi)
+   - Verificare support Gemma 4 nel runtime scelto (uscita modello 2026-04-02)
+
+2. **Abstracting del backend LLM** (stessa logica di Step 2a):
    - Protocol `LLMBackend` con metodo `complete(messages: [Message]) async throws -> String`
    - Due implementazioni: `OpenAICompatibleBackend` (l'attuale, via HTTP) e
-     `LocalLlamaBackend` (nuovo, in-process)
+     `LocalLLMBackend` (nuovo, in-process — llama.cpp o MLX)
    - `PostProcessingService` e `AppContextService` scelgono il backend
 
 3. **Gestione modello** (UX first-run):
@@ -200,7 +241,7 @@ Lavoro:
    - Opzionale: selettore quantizzazione (Q4 default, Q5/Q8 per chi ha RAM)
 
 4. **Settings UI**:
-   - Toggle "Use bundled LLM (llama.cpp + Gemma 4)" come default
+   - Toggle "Use bundled LLM (Gemma 4)" come default
    - Fallback "Use external OpenAI-compatible API" per power user
    - Override provider esistente (Step 1) resta disponibile
 
@@ -345,8 +386,9 @@ Per ogni step, verificare su questi scenari:
 - [x] **Step 0 — Build e run upstream invariato** (build via Makefile+swiftc funziona, macOS min 13.0)
 - [x] **Infra test** — SwiftPM affiancato al Makefile, `swift test` via swift-testing framework (serve Xcode installato, `xcode-select -s /Applications/Xcode.app/Contents/Developer`)
 - [x] **Step 1 — Split baseURL** completato: `transcriptionBaseURL`/`llmBaseURL`/`transcriptionAPIKey`/`llmAPIKey` in AppState con fallback retrocompatibile al legacy `apiBaseURL`/`apiKey`; UI override opt-in in SettingsView con preset Ollama; 7 test verdi (`resolveEndpoint` pura)
-- [ ] Step 2 — WhisperKit locale ← PROSSIMO
-- [ ] Step 3 — Bundle llama.cpp + Gemma 4 (elimina dipendenza Ollama per utente finale)
+- [ ] **Step 2a — TranscriptionBackend protocol refactor** ← PROSSIMO (1-2h, zero deps esterne)
+- [ ] Step 2b — WhisperKit integration (dipende da 2a; Apple Silicon only)
+- [ ] Step 3 — Bundle LLM locale (runtime da decidere: llama.cpp o MLX Swift, Intel non più vincolo)
 - [ ] Step 4 — Rimuovere cloud default + polish first-run UX
 
 ### Decisioni prese (2026-04-20)
@@ -363,10 +405,28 @@ Tentazione: un solo modello per tutto lo stack. Ragioni del NO:
 3. **Qualità italiano non verificata** su termini tecnici — Whisper è dedicato a
    speech, Gemma audio è general-purpose.
 
-Rimaniamo quindi sull'architettura **due-modelli**: WhisperKit (Swift-native,
-zero server esterni) + Gemma 4 via Ollama per LLM. Se in futuro Ollama aggiunge
-audio a Gemma 4 con qualità decente, valutiamo un collasso a un solo modello in
-uno Step 4 opzionale.
+Rimaniamo quindi sull'architettura **due-modelli**: WhisperKit + Gemma 4
+bundlato (llama.cpp o MLX Swift). Se in futuro il runtime scelto aggiunge audio
+a Gemma 4 con qualità decente, valutiamo un collasso a un solo modello in uno
+Step 5 opzionale.
+
+**Accettato: "download and go" come obiettivo prodotto.** Utente finale NON
+deve installare Ollama o altri runtime esterni. Step 3 bundla il runtime LLM
+dentro l'app. Questo alza la complessità dello Step 3 (da "1 ora rimozione
+default Groq" a "2-3 giorni integrazione runtime") ma è il requisito UX giusto
+per un'app consumer.
+
+**Accettato: drop supporto Mac Intel.** L'app target diventa **macOS 13+ su
+Apple Silicon**. Motivazioni (vedi `intel_support_dropped.md` in memoria):
+- Apple ha smesso di produrre Mac Intel a giugno 2023
+- macOS 26 Tahoe è l'ultima versione a supportare Intel (annuncio WWDC 2025)
+- macOS 27 (autunno 2026) è Apple Silicon only
+- Solo 4 modelli Intel ancora su Tahoe, riceveranno solo patch di sicurezza
+- Quota utenti Intel attivi sul target di questo prodotto: stimata 1-3%
+- Costo di supporto Intel (whisper.cpp + llama.cpp con C-interop, build system più complesso) sproporzionato rispetto al beneficio
+- Conseguenze: WhisperKit diventa scelta naturale per Step 2 (Swift-native,
+  ANE-ottimizzato); MLX Swift torna candidato valido per Step 3 insieme a
+  llama.cpp. Da dichiarare "Apple Silicon required" nel README.
 
 ---
 
