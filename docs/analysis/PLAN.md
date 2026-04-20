@@ -63,7 +63,7 @@ Il primo refactor strutturale del fork è **separare i baseURL**.
 
 ---
 
-## 3. Roadmap in 4 step
+## 3. Roadmap in 4+1 step
 
 ### Step 0 — Build e run upstream invariato (1 ora)
 
@@ -167,14 +167,57 @@ Implementazione:
 **Test**: disabilita rete o metti firewall. Detta. Deve funzionare.
 Verifica qualità italiano con frasi tecniche — se Turbo non basta, provare Medium.
 
-### Step 3 — Rimuovere Groq come default (1 ora)
+### Step 3 — Bundle LLM locale con llama.cpp (2-3 giorni)
 
-Solo dopo che Step 1 + 2 funzionano bene per 1-2 settimane reali.
+Obiettivo: eliminare la dipendenza esterna da Ollama per l'utente finale. L'app
+deve essere "download and go" — zero setup manuale di runtime LLM.
 
-- Default dell'app: WhisperKit locale + Ollama locale
-- Setup view: niente più "Enter Groq API key" obbligatorio. Se Ollama non è
-  installato, mostrare istruzioni (`brew install ollama && ollama pull gemma3n:e4b`).
-- Le opzioni cloud restano disponibili in Settings come fallback/power-user.
+**Scelta runtime: llama.cpp** (non MLX Swift). Motivo: llama.cpp supporta universal
+binary (arm64 + Intel), mentre MLX è arm64-only. I Mac Intel 2018-2022 sono ancora
+in circolazione e non vogliamo escluderli. Vedi memoria progetto
+`llm_runtime_choice.md`.
+
+Lavoro:
+
+1. **Integrazione llama.cpp**:
+   - Swift Package (llama.cpp ha SwiftPM nativo dalle release recenti) oppure
+     wrapper esistente (es. `LLM.swift` di eastriverlee)
+   - Compilazione con Metal per GPU Apple Silicon + CPU fallback per Intel
+   - Verificare support Gemma 4 in llama.cpp (uscita modello 2026-04-02; llama.cpp
+     è solitamente tra i primi a supportare nuovi Gemma)
+
+2. **Abstracting del backend LLM**:
+   - Protocol `LLMBackend` con metodo `complete(messages: [Message]) async throws -> String`
+   - Due implementazioni: `OpenAICompatibleBackend` (l'attuale, via HTTP) e
+     `LocalLlamaBackend` (nuovo, in-process)
+   - `PostProcessingService` e `AppContextService` scelgono il backend
+
+3. **Gestione modello** (UX first-run):
+   - Modello in `~/Library/Application Support/geMMaFloW/models/gemma-4-e4b-q4.gguf`
+     (~3-4 GB per Q4_K_M)
+   - Pop-up first-run "Download Gemma 4 locale (3.8 GB)" con progress bar
+   - Verifica SHA256 del modello scaricato
+   - Opzionale: selettore quantizzazione (Q4 default, Q5/Q8 per chi ha RAM)
+
+4. **Settings UI**:
+   - Toggle "Use bundled LLM (llama.cpp + Gemma 4)" come default
+   - Fallback "Use external OpenAI-compatible API" per power user
+   - Override provider esistente (Step 1) resta disponibile
+
+**Test**: rete disconnessa + Ollama spento. Detta → deve funzionare tutto locale.
+Qualità italiano Gemma 4 E4B Q4 sui prompt di post-processing: 80%+ pari a
+Gemma 4 full precision.
+
+### Step 4 — Rimuovere cloud come default e polish first-run (1 giorno)
+
+Solo dopo che Step 2 + 3 funzionano bene per 1-2 settimane reali.
+
+- Default dell'app: WhisperKit locale + llama.cpp + Gemma 4 locale
+- Setup view: niente più "Enter Groq API key" obbligatorio. Primo avvio guida al
+  download dei due modelli (Whisper + Gemma) con progress visibile.
+- Le opzioni cloud (Groq, OpenAI, altri) restano disponibili in Settings come
+  opt-in per power user.
+- Firma, notarizzazione, DMG per distribuzione.
 
 ---
 
@@ -300,9 +343,11 @@ Per ogni step, verificare su questi scenari:
 - [x] Codice analizzato, file chiave identificati
 - [x] Piano scritto (questo file)
 - [x] **Step 0 — Build e run upstream invariato** (build via Makefile+swiftc funziona, macOS min 13.0)
-- [~] **Step 1 — Split baseURL** ← IN CORSO (~40%): modelli separabili ✅, baseURL/apiKey ancora condivisi ❌
-- [ ] Step 2 — WhisperKit locale
-- [ ] Step 3 — Rimuovere default Groq
+- [x] **Infra test** — SwiftPM affiancato al Makefile, `swift test` via swift-testing framework (serve Xcode installato, `xcode-select -s /Applications/Xcode.app/Contents/Developer`)
+- [x] **Step 1 — Split baseURL** completato: `transcriptionBaseURL`/`llmBaseURL`/`transcriptionAPIKey`/`llmAPIKey` in AppState con fallback retrocompatibile al legacy `apiBaseURL`/`apiKey`; UI override opt-in in SettingsView con preset Ollama; 7 test verdi (`resolveEndpoint` pura)
+- [ ] Step 2 — WhisperKit locale ← PROSSIMO
+- [ ] Step 3 — Bundle llama.cpp + Gemma 4 (elimina dipendenza Ollama per utente finale)
+- [ ] Step 4 — Rimuovere cloud default + polish first-run UX
 
 ### Decisioni prese (2026-04-20)
 

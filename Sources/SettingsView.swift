@@ -50,6 +50,15 @@ struct ProviderSettingsFields: View {
     @State private var postProcessingModelDraft: String = ""
     @State private var postProcessingFallbackModelDraft: String = ""
     @State private var contextModelDraft: String = ""
+    @State private var transcriptionBaseURLDraft: String = ""
+    @State private var transcriptionAPIKeyDraft: String = ""
+    @State private var llmBaseURLDraft: String = ""
+    @State private var llmAPIKeyDraft: String = ""
+    @State private var overridesExpanded: Bool = false
+    @FocusState private var isEditingTranscriptionBaseURL: Bool
+    @FocusState private var isEditingTranscriptionAPIKey: Bool
+    @FocusState private var isEditingLLMBaseURL: Bool
+    @FocusState private var isEditingLLMAPIKey: Bool
 
     let showsModelDescription: Bool
 
@@ -86,6 +95,55 @@ struct ProviderSettingsFields: View {
         contextModelDraft = trimmed
         guard appState.contextModel != trimmed else { return }
         appState.contextModel = trimmed
+    }
+
+    private func commitTranscriptionBaseURL() {
+        let trimmed = transcriptionBaseURLDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        transcriptionBaseURLDraft = trimmed
+        guard appState.transcriptionBaseURL != trimmed else { return }
+        appState.transcriptionBaseURL = trimmed
+    }
+
+    private func commitTranscriptionAPIKey() {
+        let trimmed = transcriptionAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        transcriptionAPIKeyDraft = trimmed
+        guard appState.transcriptionAPIKey != trimmed else { return }
+        appState.transcriptionAPIKey = trimmed
+    }
+
+    private func commitLLMBaseURL() {
+        let trimmed = llmBaseURLDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        llmBaseURLDraft = trimmed
+        guard appState.llmBaseURL != trimmed else { return }
+        appState.llmBaseURL = trimmed
+    }
+
+    private func commitLLMAPIKey() {
+        let trimmed = llmAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        llmAPIKeyDraft = trimmed
+        guard appState.llmAPIKey != trimmed else { return }
+        appState.llmAPIKey = trimmed
+    }
+
+    private func applyOllamaLLMPreset() {
+        llmBaseURLDraft = "http://localhost:11434/v1"
+        llmAPIKeyDraft = "ollama"
+        commitLLMBaseURL()
+        commitLLMAPIKey()
+    }
+
+    private func clearLLMOverride() {
+        llmBaseURLDraft = ""
+        llmAPIKeyDraft = ""
+        commitLLMBaseURL()
+        commitLLMAPIKey()
+    }
+
+    private func clearTranscriptionOverride() {
+        transcriptionBaseURLDraft = ""
+        transcriptionAPIKeyDraft = ""
+        commitTranscriptionBaseURL()
+        commitTranscriptionAPIKey()
     }
 
     var body: some View {
@@ -227,12 +285,89 @@ struct ProviderSettingsFields: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            DisclosureGroup(isExpanded: $overridesExpanded) {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Route transcription and LLM traffic to different providers. Empty fields fall back to the API Base URL and API key above, so existing setups keep working unchanged.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("Transcription Provider Override")
+                                .font(.caption.weight(.semibold))
+                            Spacer()
+                            Button("Clear") { clearTranscriptionOverride() }
+                                .font(.caption)
+                                .disabled(transcriptionBaseURLDraft.isEmpty && transcriptionAPIKeyDraft.isEmpty)
+                        }
+                        TextField("Base URL (e.g. https://api.groq.com/openai/v1)", text: $transcriptionBaseURLDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.body, design: .monospaced))
+                            .focused($isEditingTranscriptionBaseURL)
+                            .onSubmit { commitTranscriptionBaseURL() }
+                            .onChange(of: isEditingTranscriptionBaseURL) { editing in
+                                if !editing { commitTranscriptionBaseURL() }
+                            }
+                        SecureField("API key (leave empty to reuse the default)", text: $transcriptionAPIKeyDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .focused($isEditingTranscriptionAPIKey)
+                            .onSubmit { commitTranscriptionAPIKey() }
+                            .onChange(of: isEditingTranscriptionAPIKey) { editing in
+                                if !editing { commitTranscriptionAPIKey() }
+                            }
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("LLM Provider Override")
+                                .font(.caption.weight(.semibold))
+                            Spacer()
+                            Button("Use Ollama") { applyOllamaLLMPreset() }
+                                .font(.caption)
+                            Button("Clear") { clearLLMOverride() }
+                                .font(.caption)
+                                .disabled(llmBaseURLDraft.isEmpty && llmAPIKeyDraft.isEmpty)
+                        }
+                        TextField("Base URL (e.g. http://localhost:11434/v1)", text: $llmBaseURLDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.body, design: .monospaced))
+                            .focused($isEditingLLMBaseURL)
+                            .onSubmit { commitLLMBaseURL() }
+                            .onChange(of: isEditingLLMBaseURL) { editing in
+                                if !editing { commitLLMBaseURL() }
+                            }
+                        SecureField("API key (\"ollama\" for local, leave empty to reuse the default)", text: $llmAPIKeyDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .focused($isEditingLLMAPIKey)
+                            .onSubmit { commitLLMAPIKey() }
+                            .onChange(of: isEditingLLMAPIKey) { editing in
+                                if !editing { commitLLMAPIKey() }
+                            }
+                        Text("LLM override also handles context inference.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.top, 6)
+            } label: {
+                Text("Advanced: split transcription and LLM providers")
+                    .font(.caption.weight(.semibold))
+            }
         }
         .onAppear {
             transcriptionModelDraft = appState.transcriptionModel
             postProcessingModelDraft = appState.postProcessingModel
             postProcessingFallbackModelDraft = appState.postProcessingFallbackModel
             contextModelDraft = appState.contextModel
+            transcriptionBaseURLDraft = appState.transcriptionBaseURL
+            transcriptionAPIKeyDraft = appState.transcriptionAPIKey
+            llmBaseURLDraft = appState.llmBaseURL
+            llmAPIKeyDraft = appState.llmAPIKey
+            overridesExpanded = !(appState.transcriptionBaseURL.isEmpty
+                && appState.transcriptionAPIKey.isEmpty
+                && appState.llmBaseURL.isEmpty
+                && appState.llmAPIKey.isEmpty)
         }
         .onChange(of: appState.transcriptionModel) { value in
             if !isEditingTranscriptionModel {
@@ -253,6 +388,18 @@ struct ProviderSettingsFields: View {
             if !isEditingContextModel {
                 contextModelDraft = value
             }
+        }
+        .onChange(of: appState.transcriptionBaseURL) { value in
+            if !isEditingTranscriptionBaseURL { transcriptionBaseURLDraft = value }
+        }
+        .onChange(of: appState.transcriptionAPIKey) { value in
+            if !isEditingTranscriptionAPIKey { transcriptionAPIKeyDraft = value }
+        }
+        .onChange(of: appState.llmBaseURL) { value in
+            if !isEditingLLMBaseURL { llmBaseURLDraft = value }
+        }
+        .onChange(of: appState.llmAPIKey) { value in
+            if !isEditingLLMAPIKey { llmAPIKeyDraft = value }
         }
     }
 }
