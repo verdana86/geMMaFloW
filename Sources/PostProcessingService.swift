@@ -127,7 +127,20 @@ Behavior:
         preferredModel: String = "",
         preferredFallbackModel: String = ""
     ) {
-        self.backend = RemoteOpenAILLMBackend(apiKey: apiKey, baseURL: baseURL)
+        // Route to local (MLX / bundled Gemma) or remote OpenAI-compatible
+        // backend based on the baseURL scheme. Parsing errors fall back to
+        // remote to preserve existing behavior for legacy configurations.
+        if let kind = try? LLMBackendKind.parse(baseURL: baseURL) {
+            switch kind {
+            case .remoteOpenAI(let url):
+                self.backend = RemoteOpenAILLMBackend(apiKey: apiKey, baseURL: url)
+            case .localMLX(let modelId):
+                let resolvedId = modelId ?? LocalLLMModelChoice.default.mlxModelId
+                self.backend = LocalLLMBackend(modelId: resolvedId)
+            }
+        } else {
+            self.backend = RemoteOpenAILLMBackend(apiKey: apiKey, baseURL: baseURL)
+        }
         self.preferredModel = preferredModel.trimmingCharacters(in: .whitespacesAndNewlines)
         self.preferredFallbackModel = preferredFallbackModel.trimmingCharacters(in: .whitespacesAndNewlines)
     }
