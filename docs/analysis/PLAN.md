@@ -202,23 +202,16 @@ Lavoro:
 Obiettivo: eliminare la dipendenza esterna da Ollama per l'utente finale. L'app
 deve essere "download and go" — zero setup manuale di runtime LLM.
 
-**Scelta runtime: da rivalutare all'inizio dello Step 3.** In seguito alla
-decisione di droppare il supporto Intel (vedi `intel_support_dropped.md`), il
-vincolo che portava a llama.cpp (universal binary) è caduto. Le due opzioni
-tornano in gioco:
+**Scelta runtime: MLX Swift** (deciso 2026-04-20, vedi `llm_runtime_choice.md`).
+Package `ml-explore/mlx-swift-lm` con prodotti `MLXLLM` + `MLXLMCommon`.
 
-- **llama.cpp**: maturo, GGUF standard, community ampia, primi a supportare
-  nuovi modelli. C-interop più lavoro.
-- **MLX Swift**: Apple-nativo, arm64-only (ok per noi ora), Swift puro più
-  pulito, integrazione più veloce, tuning esplicito per Apple Silicon/ANE.
+Motivazione:
+- Gemma 4 E4B supportato in entrambi MLX e llama.cpp
+- MLX è **20-87% più veloce** su Apple Silicon per modelli <14B (Gemma 4 E4B è in questa fascia)
+- MLX Swift ha API native, llama.cpp richiederebbe C-interop manuale
+- Consistenza con WhisperKit (entrambi Swift Package puri)
 
-Vantaggio MLX Swift: consistenza stile con WhisperKit (entrambi Swift-native,
-entrambi arm64-only, entrambi Apple-tuned). Svantaggio MLX: più giovane, meno
-battuto in produzione.
-
-Da decidere quando si arriva qui, basandosi su: (1) stato di supporto Gemma 4
-in entrambi i runtime al momento dello Step 3, (2) facilità di integrazione
-concreta (fare un PoC di 2 ore per ciascuno), (3) qualità output.
+Dropping Intel significa che MLX arm64-only non è un problema.
 
 Lavoro (indipendente dal runtime scelto):
 
@@ -383,13 +376,16 @@ Per ogni step, verificare su questi scenari:
 - [x] Upstream remote configurato (`git fetch upstream`)
 - [x] Codice analizzato, file chiave identificati
 - [x] Piano scritto (questo file)
-- [x] **Step 0 — Build e run upstream invariato** (build via Makefile+swiftc funziona, macOS min 13.0)
-- [x] **Infra test** — SwiftPM affiancato al Makefile, `swift test` via swift-testing framework (serve Xcode installato, `xcode-select -s /Applications/Xcode.app/Contents/Developer`)
-- [x] **Step 1 — Split baseURL** completato: `transcriptionBaseURL`/`llmBaseURL`/`transcriptionAPIKey`/`llmAPIKey` in AppState con fallback retrocompatibile al legacy `apiBaseURL`/`apiKey`; UI override opt-in in SettingsView con preset Ollama; 7 test verdi (`resolveEndpoint` pura)
-- [ ] **Step 2a — TranscriptionBackend protocol refactor** ← PROSSIMO (1-2h, zero deps esterne)
-- [ ] Step 2b — WhisperKit integration (dipende da 2a; Apple Silicon only)
-- [ ] Step 3 — Bundle LLM locale (runtime da decidere: llama.cpp o MLX Swift, Intel non più vincolo)
-- [ ] Step 4 — Rimuovere cloud default + polish first-run UX
+- [x] **Step 0 — Build e run upstream invariato** (macOS min bump poi a 14.0 per MLX)
+- [x] **Infra test** — SwiftPM + swift-testing (serve Xcode pieno installato)
+- [x] **Step 1 — Split baseURL** — `transcriptionBaseURL`/`llmBaseURL`/keys separati con fallback, UI override opt-in
+- [x] **Step 2a — TranscriptionBackend refactor** — `HallucinationFilter`, protocol, `RemoteOpenAITranscriptionBackend`, `LocalBackendIdentifier` estratti
+- [x] **Step 2b — WhisperKit integration** — WhisperKit 0.14.1, build system Makefile→swift build, ad-hoc codesign default
+- [x] **Step 2b.iii — Polish WhisperKit** — `WhisperKitModelChoice` (Turbo/Large/Small), `TranscriptionLanguage` picker, `WhisperKitDownloadManager` con progress bar
+- [x] **Step 3a — LLMBackend refactor** — protocol + `RemoteOpenAILLMBackend` + types, `PostProcessingService` migrato (`AppContextService` rimandato per multimodal)
+- [x] **Step 3b — Runtime MLX Swift scelto e integrato** — mlx-swift-lm branch main, macOS 13→14 bump (richiesto da MLX), 47/47 test verdi, .app 42MB
+- [ ] **Step 3c — LocalLLMBackend via MLX** ← PROSSIMO
+- [ ] Step 4 — Rimuovere cloud default + redesign onboarding
 
 ### Decisioni prese (2026-04-20)
 

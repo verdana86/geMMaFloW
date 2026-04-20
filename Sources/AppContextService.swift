@@ -183,6 +183,11 @@ Return only two sentences, no labels, no markdown, no extra commentary.
         return nil
     }
 
+    // NOTE: Not migrated to LLMBackend in Step 3a because this path mixes
+    // text-only and multimodal (image_url) requests. Moving the multimodal
+    // case would require extending LLMChatMessage to carry a content-parts
+    // union. Will be tackled in Step 3c once we know whether the local
+    // runtime (llama.cpp / MLX) supports image input for Gemma 4 E4B.
     private func inferActivityWithLLM(
         appName: String?,
         bundleIdentifier: String?,

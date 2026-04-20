@@ -112,8 +112,7 @@ Behavior:
 - Do not treat VOICE_COMMAND as dictation to clean up and paste directly.
 """
 
-    private let apiKey: String
-    private let baseURL: String
+    private let backend: LLMBackend
     private let preferredModel: String
     private let preferredFallbackModel: String
     private let defaultModel = "openai/gpt-oss-20b"
@@ -128,10 +127,26 @@ Behavior:
         preferredModel: String = "",
         preferredFallbackModel: String = ""
     ) {
-        self.apiKey = apiKey
-        self.baseURL = baseURL
+        self.backend = RemoteOpenAILLMBackend(apiKey: apiKey, baseURL: baseURL)
         self.preferredModel = preferredModel.trimmingCharacters(in: .whitespacesAndNewlines)
         self.preferredFallbackModel = preferredFallbackModel.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Translates LLMBackendError (the shared transport-level error) into
+    /// the PostProcessingError cases callers expect. Keeps the public API
+    /// of this service unchanged after the Step 3a backend refactor.
+    private func translate(_ error: Error) -> Error {
+        guard let backendError = error as? LLMBackendError else { return error }
+        switch backendError {
+        case .requestFailed(let status, let body):
+            return PostProcessingError.requestFailed(status, body)
+        case .invalidResponse(let details):
+            return PostProcessingError.invalidResponse(details)
+        case .emptyOutput:
+            return PostProcessingError.emptyOutput
+        case .requestTimedOut(let seconds):
+            return PostProcessingError.requestTimedOut(seconds)
+        }
     }
 
     func postProcess(
@@ -336,12 +351,6 @@ Behavior:
         customVocabulary: [String],
         customSystemPrompt: String = ""
     ) async throws -> PostProcessingResult {
-        var request = URLRequest(url: URL(string: "\(baseURL)/chat/completions")!)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = postProcessingTimeoutSeconds
-
         let normalizedVocabulary = normalizedVocabularyText(customVocabulary)
         let vocabularyPrompt = if !normalizedVocabulary.isEmpty {
             """
@@ -378,48 +387,24 @@ Model: \(model)
 \(userMessage)
 """
 
-        var payload: [String: Any] = [
-            "model": model,
-            "temperature": 0.0,
-            "messages": [
-                [
-                    "role": "system",
-                    "content": systemPrompt
-                ],
-                [
-                    "role": "user",
-                    "content": userMessage
-                ]
-            ]
-        ]
-        if model == defaultModel {
-            payload["max_completion_tokens"] = postProcessingMaxCompletionTokens
-            payload["reasoning_effort"] = defaultModelReasoningEffort
-            payload["include_reasoning"] = false
-        }
+        let chatRequest = LLMChatRequest(
+            model: model,
+            messages: [
+                LLMChatMessage(role: .system, content: systemPrompt),
+                LLMChatMessage(role: .user, content: userMessage)
+            ],
+            temperature: 0.0,
+            maxCompletionTokens: model == defaultModel ? postProcessingMaxCompletionTokens : nil,
+            reasoningEffort: model == defaultModel ? defaultModelReasoningEffort : nil,
+            includeReasoning: model == defaultModel ? false : nil,
+            timeoutSeconds: postProcessingTimeoutSeconds
+        )
 
-        request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
-
-        let (data, response) = try await LLMAPITransport.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw PostProcessingError.invalidResponse("No HTTP response")
-        }
-
-        guard httpResponse.statusCode == 200 else {
-            let message = String(data: data, encoding: .utf8) ?? ""
-            throw PostProcessingError.requestFailed(httpResponse.statusCode, message)
-        }
-
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = json["choices"] as? [[String: Any]],
-              let firstChoice = choices.first,
-              let message = firstChoice["message"] as? [String: Any],
-              let content = message["content"] as? String else {
-            throw PostProcessingError.invalidResponse("Missing choices[0].message.content")
-        }
-
-        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw PostProcessingError.emptyOutput
+        let content: String
+        do {
+            content = try await backend.complete(chatRequest)
+        } catch {
+            throw translate(error)
         }
 
         let sanitizedTranscript = sanitizePostProcessedTranscript(content)
@@ -436,12 +421,6 @@ Model: \(model)
         model: String,
         customVocabulary: [String]
     ) async throws -> PostProcessingResult {
-        var request = URLRequest(url: URL(string: "\(baseURL)/chat/completions")!)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = postProcessingTimeoutSeconds
-
         let normalizedVocabulary = normalizedVocabularyText(customVocabulary)
         let vocabularyPrompt = if !normalizedVocabulary.isEmpty {
             """
@@ -478,48 +457,24 @@ Model: \(model)
 \(userMessage)
 """
 
-        var payload: [String: Any] = [
-            "model": model,
-            "temperature": 0.0,
-            "messages": [
-                [
-                    "role": "system",
-                    "content": systemPrompt
-                ],
-                [
-                    "role": "user",
-                    "content": userMessage
-                ]
-            ]
-        ]
-        if model == defaultModel {
-            payload["max_completion_tokens"] = postProcessingMaxCompletionTokens
-            payload["reasoning_effort"] = defaultModelReasoningEffort
-            payload["include_reasoning"] = false
-        }
+        let chatRequest = LLMChatRequest(
+            model: model,
+            messages: [
+                LLMChatMessage(role: .system, content: systemPrompt),
+                LLMChatMessage(role: .user, content: userMessage)
+            ],
+            temperature: 0.0,
+            maxCompletionTokens: model == defaultModel ? postProcessingMaxCompletionTokens : nil,
+            reasoningEffort: model == defaultModel ? defaultModelReasoningEffort : nil,
+            includeReasoning: model == defaultModel ? false : nil,
+            timeoutSeconds: postProcessingTimeoutSeconds
+        )
 
-        request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
-
-        let (data, response) = try await LLMAPITransport.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw PostProcessingError.invalidResponse("No HTTP response")
-        }
-
-        guard httpResponse.statusCode == 200 else {
-            let message = String(data: data, encoding: .utf8) ?? ""
-            throw PostProcessingError.requestFailed(httpResponse.statusCode, message)
-        }
-
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = json["choices"] as? [[String: Any]],
-              let firstChoice = choices.first,
-              let message = firstChoice["message"] as? [String: Any],
-              let content = message["content"] as? String else {
-            throw PostProcessingError.invalidResponse("Missing choices[0].message.content")
-        }
-
-        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw PostProcessingError.emptyOutput
+        let content: String
+        do {
+            content = try await backend.complete(chatRequest)
+        } catch {
+            throw translate(error)
         }
 
         let sanitizedTranscript = sanitizeCommandModeTranscript(content)
