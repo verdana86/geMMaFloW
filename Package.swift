@@ -2,16 +2,18 @@
 import PackageDescription
 
 let package = Package(
-    name: "FreeFlowCore",
+    name: "FreeFlow",
     platforms: [.macOS(.v13)],
-    products: [
-        .library(name: "FreeFlowCore", targets: ["FreeFlowCore"])
+    dependencies: [
+        .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.9.0")
     ],
     targets: [
-        .target(
+        .executableTarget(
             name: "FreeFlowCore",
-            path: "Sources",
-            exclude: ["App.swift"]
+            dependencies: [
+                .product(name: "WhisperKit", package: "WhisperKit")
+            ],
+            path: "Sources"
         ),
         .testTarget(
             name: "FreeFlowCoreTests",

@@ -26,7 +26,13 @@ class TranscriptionService {
                 transcriptionModel: resolvedModel
             )
         case .local(let identifier):
-            self.backend = LocalTranscriptionBackend(identifier: identifier)
+            let parsed = LocalBackendIdentifier.parse(identifier)
+            switch parsed.runtime {
+            case "whisperkit":
+                self.backend = WhisperKitBackend(modelVariant: parsed.modelVariant)
+            default:
+                self.backend = LocalTranscriptionBackend(identifier: identifier)
+            }
         }
     }
 

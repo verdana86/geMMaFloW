@@ -1,10 +1,25 @@
 import Foundation
 
 /// Abstraction over the different ways `TranscriptionService` can produce a
-/// transcript: remote OpenAI-compatible API (Groq, self-hosted) today, local
-/// runtimes (WhisperKit and friends) once Step 2b lands.
+/// transcript: remote OpenAI-compatible API (Groq, self-hosted) or local
+/// runtimes (WhisperKit today, whisper.cpp/others in the future).
 protocol TranscriptionBackend {
     func transcribe(fileURL: URL) async throws -> String
+}
+
+/// Splits a `local://` sentinel payload into its runtime name and optional
+/// model variant. Example: "whisperkit/large-v3-turbo" →
+/// runtime="whisperkit", modelVariant="large-v3-turbo".
+struct LocalBackendIdentifier: Equatable {
+    let runtime: String
+    let modelVariant: String?
+
+    static func parse(_ identifier: String) -> LocalBackendIdentifier {
+        let parts = identifier.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+        let runtime = parts.first ?? ""
+        let variant = parts.count > 1 && !parts[1].isEmpty ? parts[1] : nil
+        return LocalBackendIdentifier(runtime: runtime, modelVariant: variant)
+    }
 }
 
 /// Routing decision based on the configured transcription base URL. Pure

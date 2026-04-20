@@ -10,43 +10,25 @@ space := $(empty) $(empty)
 APP_EXECUTABLE = $(MACOS_DIR)/$(APP_NAME)
 APP_EXECUTABLE_TARGET := $(subst $(space),\ ,$(APP_EXECUTABLE))
 
-SOURCES = $(wildcard Sources/*.swift)
+SWIFT_CONFIG ?= release
+SWIFT_EXECUTABLE_NAME = FreeFlowCore
+
+SOURCES := $(wildcard Sources/*.swift) Package.swift
 RESOURCES = $(CONTENTS)/Resources
-ARCH ?= $(shell uname -m)
 ICON_SOURCE = Resources/AppIcon-Source.png
 ICON_ICNS = Resources/AppIcon.icns
 
-.PHONY: all clean run icon dmg codesign-dmg notarize
+.PHONY: all clean run icon dmg codesign-dmg notarize test
 
 all: $(APP_EXECUTABLE_TARGET)
 
+test:
+	swift test
+
 $(APP_EXECUTABLE_TARGET): $(SOURCES) Info.plist $(ICON_ICNS)
 	@mkdir -p "$(MACOS_DIR)" "$(RESOURCES)"
-ifeq ($(ARCH),universal)
-	swiftc \
-		-parse-as-library \
-		-o "$(MACOS_DIR)/$(APP_NAME)-arm64" \
-		-sdk $(shell xcrun --show-sdk-path) \
-		-target arm64-apple-macosx13.0 \
-		$(SOURCES)
-	swiftc \
-		-parse-as-library \
-		-o "$(MACOS_DIR)/$(APP_NAME)-x86_64" \
-		-sdk $(shell xcrun --show-sdk-path) \
-		-target x86_64-apple-macosx13.0 \
-		$(SOURCES)
-	lipo -create -output "$(MACOS_DIR)/$(APP_NAME)" \
-		"$(MACOS_DIR)/$(APP_NAME)-arm64" \
-		"$(MACOS_DIR)/$(APP_NAME)-x86_64"
-	@rm "$(MACOS_DIR)/$(APP_NAME)-arm64" "$(MACOS_DIR)/$(APP_NAME)-x86_64"
-else
-	swiftc \
-		-parse-as-library \
-		-o "$(MACOS_DIR)/$(APP_NAME)" \
-		-sdk $(shell xcrun --show-sdk-path) \
-		-target $(ARCH)-apple-macosx13.0 \
-		$(SOURCES)
-endif
+	swift build -c $(SWIFT_CONFIG) --product $(SWIFT_EXECUTABLE_NAME)
+	@cp "$$(swift build -c $(SWIFT_CONFIG) --show-bin-path)/$(SWIFT_EXECUTABLE_NAME)" "$(MACOS_DIR)/$(APP_NAME)"
 	@cp Info.plist "$(CONTENTS)/"
 	@plutil -replace CFBundleName -string "$(APP_NAME)" "$(CONTENTS)/Info.plist"
 	@plutil -replace CFBundleDisplayName -string "$(APP_NAME)" "$(CONTENTS)/Info.plist"
@@ -107,7 +89,7 @@ notarize:
 	xcrun stapler staple "$(BUILD_DIR)/$(APP_NAME).dmg"
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) .build
 
 run: all
 	open "$(APP_BUNDLE)"

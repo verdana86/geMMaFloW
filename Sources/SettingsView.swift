@@ -132,6 +132,13 @@ struct ProviderSettingsFields: View {
         commitLLMAPIKey()
     }
 
+    private func applyWhisperKitTranscriptionPreset() {
+        transcriptionBaseURLDraft = "local://whisperkit"
+        transcriptionAPIKeyDraft = ""
+        commitTranscriptionBaseURL()
+        commitTranscriptionAPIKey()
+    }
+
     private func clearLLMOverride() {
         llmBaseURLDraft = ""
         llmAPIKeyDraft = ""
@@ -297,6 +304,8 @@ struct ProviderSettingsFields: View {
                             Text("Transcription Provider Override")
                                 .font(.caption.weight(.semibold))
                             Spacer()
+                            Button("Use WhisperKit") { applyWhisperKitTranscriptionPreset() }
+                                .font(.caption)
                             Button("Clear") { clearTranscriptionOverride() }
                                 .font(.caption)
                                 .disabled(transcriptionBaseURLDraft.isEmpty && transcriptionAPIKeyDraft.isEmpty)
