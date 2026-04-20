@@ -170,6 +170,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private let transcriptionAPIKeyStorageKey = "transcription_api_key"
     private let llmAPIKeyStorageKey = "llm_api_key"
     private let transcriptionModelStorageKey = "transcription_model"
+    private let transcriptionLanguageStorageKey = "transcription_language"
     private let postProcessingModelStorageKey = "post_processing_model"
     private let postProcessingFallbackModelStorageKey = "post_processing_fallback_model"
     private let contextModelStorageKey = "context_model"
@@ -266,6 +267,12 @@ final class AppState: ObservableObject, @unchecked Sendable {
     @Published var transcriptionModel: String {
         didSet {
             UserDefaults.standard.set(transcriptionModel, forKey: transcriptionModelStorageKey)
+        }
+    }
+
+    @Published var transcriptionLanguage: String {
+        didSet {
+            UserDefaults.standard.set(transcriptionLanguage, forKey: transcriptionLanguageStorageKey)
         }
     }
 
@@ -468,6 +475,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let initialLLMBaseURL = Self.resolveEndpoint(specific: llmBaseURL, legacy: apiBaseURL)
         let initialLLMAPIKey = Self.resolveEndpoint(specific: llmAPIKey, legacy: apiKey)
         let transcriptionModel = UserDefaults.standard.string(forKey: transcriptionModelStorageKey) ?? Self.defaultTranscriptionModel
+        let transcriptionLanguage = UserDefaults.standard.string(forKey: transcriptionLanguageStorageKey) ?? ""
         let postProcessingModel = UserDefaults.standard.string(forKey: postProcessingModelStorageKey) ?? Self.defaultPostProcessingModel
         let postProcessingFallbackModel = UserDefaults.standard.string(forKey: postProcessingFallbackModelStorageKey) ?? Self.defaultPostProcessingFallbackModel
         let contextModel = UserDefaults.standard.string(forKey: contextModelStorageKey) ?? Self.defaultContextModel
@@ -540,6 +548,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         self.transcriptionAPIKey = transcriptionAPIKey
         self.llmAPIKey = llmAPIKey
         self.transcriptionModel = transcriptionModel
+        self.transcriptionLanguage = transcriptionLanguage
         self.postProcessingModel = postProcessingModel
         self.postProcessingFallbackModel = postProcessingFallbackModel
         self.contextModel = contextModel
@@ -799,7 +808,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
                 let transcriptionService = try TranscriptionService(
                     apiKey: effectiveTranscriptionAPIKey,
                     baseURL: effectiveTranscriptionBaseURL,
-                    transcriptionModel: transcriptionModel
+                    transcriptionModel: transcriptionModel,
+                    transcriptionLanguage: transcriptionLanguage
                 )
                 let rawTranscript = try await transcriptionService.transcribe(fileURL: audioURL)
 
@@ -1804,7 +1814,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
                     let transcriptionService = try TranscriptionService(
                         apiKey: self.effectiveTranscriptionAPIKey,
                         baseURL: self.effectiveTranscriptionBaseURL,
-                        transcriptionModel: self.transcriptionModel
+                        transcriptionModel: self.transcriptionModel,
+                        transcriptionLanguage: self.transcriptionLanguage
                     )
                     async let transcript = transcriptionService.transcribe(fileURL: transcriptionFileURL)
                     let rawTranscript = try await transcript

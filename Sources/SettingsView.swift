@@ -59,6 +59,9 @@ struct ProviderSettingsFields: View {
     @FocusState private var isEditingTranscriptionAPIKey: Bool
     @FocusState private var isEditingLLMBaseURL: Bool
     @FocusState private var isEditingLLMAPIKey: Bool
+    @State private var whisperKitChoice: WhisperKitModelChoice = .default
+    @State private var transcriptionLanguage: TranscriptionLanguage = .auto
+    @ObservedObject private var whisperKitDownloads = WhisperKitDownloadManager.shared
 
     let showsModelDescription: Bool
 
@@ -133,10 +136,70 @@ struct ProviderSettingsFields: View {
     }
 
     private func applyWhisperKitTranscriptionPreset() {
-        transcriptionBaseURLDraft = "local://whisperkit"
+        whisperKitChoice = .default
+        transcriptionBaseURLDraft = WhisperKitModelChoice.default.sentinelBaseURL
         transcriptionAPIKeyDraft = ""
         commitTranscriptionBaseURL()
         commitTranscriptionAPIKey()
+    }
+
+    private var isUsingWhisperKit: Bool {
+        WhisperKitModelChoice.fromSentinelBaseURL(transcriptionBaseURLDraft) != nil
+            || transcriptionBaseURLDraft.hasPrefix("local://whisperkit")
+    }
+
+    private func applyWhisperKitModelChoice(_ choice: WhisperKitModelChoice) {
+        whisperKitChoice = choice
+        transcriptionBaseURLDraft = choice.sentinelBaseURL
+        commitTranscriptionBaseURL()
+    }
+
+    private func applyTranscriptionLanguage(_ language: TranscriptionLanguage) {
+        transcriptionLanguage = language
+        guard appState.transcriptionLanguage != language.isoCode else { return }
+        appState.transcriptionLanguage = language.isoCode
+    }
+
+    @ViewBuilder
+    private func whisperKitDownloadStatusView(for variant: String) -> some View {
+        let isActive = whisperKitDownloads.isDownloading
+            && whisperKitDownloads.currentVariant == variant
+        let isCached = whisperKitDownloads.cachedFolder(for: variant) != nil
+
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Model status:")
+                    .font(.caption)
+                Spacer()
+                if isActive {
+                    Text("\(Int(whisperKitDownloads.progressFraction * 100))%")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                } else if isCached {
+                    Label("Ready", systemImage: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                        .labelStyle(.titleAndIcon)
+                } else {
+                    Button("Download now") {
+                        Task {
+                            _ = try? await whisperKitDownloads.ensureModel(variant: variant)
+                        }
+                    }
+                    .font(.caption)
+                }
+            }
+            if isActive {
+                ProgressView(value: whisperKitDownloads.progressFraction)
+                    .progressViewStyle(.linear)
+            }
+            if let error = whisperKitDownloads.errorMessage,
+               whisperKitDownloads.currentVariant == variant {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
     }
 
     private func clearLLMOverride() {
@@ -325,6 +388,41 @@ struct ProviderSettingsFields: View {
                             .onChange(of: isEditingTranscriptionAPIKey) { editing in
                                 if !editing { commitTranscriptionAPIKey() }
                             }
+
+                        if isUsingWhisperKit {
+                            HStack {
+                                Text("Model:")
+                                    .font(.caption)
+                                Picker("", selection: $whisperKitChoice) {
+                                    ForEach(WhisperKitModelChoice.allCases) { choice in
+                                        Text(choice.displayName).tag(choice)
+                                    }
+                                }
+                                .labelsHidden()
+                                .onChange(of: whisperKitChoice) { newValue in
+                                    applyWhisperKitModelChoice(newValue)
+                                }
+                            }
+                            HStack {
+                                Text("Language:")
+                                    .font(.caption)
+                                Picker("", selection: $transcriptionLanguage) {
+                                    ForEach(TranscriptionLanguage.allCases) { language in
+                                        Text(language.displayName).tag(language)
+                                    }
+                                }
+                                .labelsHidden()
+                                .onChange(of: transcriptionLanguage) { newValue in
+                                    applyTranscriptionLanguage(newValue)
+                                }
+                            }
+
+                            whisperKitDownloadStatusView(for: whisperKitChoice.whisperKitIdentifier)
+
+                            Text("Model is downloaded on first use. Auto-detect language works but can be unreliable on short clips — pick a specific language to lock it.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
 
                     VStack(alignment: .leading, spacing: 6) {
@@ -377,6 +475,8 @@ struct ProviderSettingsFields: View {
                 && appState.transcriptionAPIKey.isEmpty
                 && appState.llmBaseURL.isEmpty
                 && appState.llmAPIKey.isEmpty)
+            whisperKitChoice = WhisperKitModelChoice.fromSentinelBaseURL(appState.transcriptionBaseURL) ?? .default
+            transcriptionLanguage = TranscriptionLanguage.fromISO(appState.transcriptionLanguage)
         }
         .onChange(of: appState.transcriptionModel) { value in
             if !isEditingTranscriptionModel {
@@ -400,6 +500,9 @@ struct ProviderSettingsFields: View {
         }
         .onChange(of: appState.transcriptionBaseURL) { value in
             if !isEditingTranscriptionBaseURL { transcriptionBaseURLDraft = value }
+            if let choice = WhisperKitModelChoice.fromSentinelBaseURL(value) {
+                whisperKitChoice = choice
+            }
         }
         .onChange(of: appState.transcriptionAPIKey) { value in
             if !isEditingTranscriptionAPIKey { transcriptionAPIKeyDraft = value }

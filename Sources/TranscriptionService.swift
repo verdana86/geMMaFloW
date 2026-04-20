@@ -12,10 +12,14 @@ class TranscriptionService {
     init(
         apiKey: String,
         baseURL: String = "https://api.groq.com/openai/v1",
-        transcriptionModel: String = "whisper-large-v3"
+        transcriptionModel: String = "whisper-large-v3",
+        transcriptionLanguage: String? = nil
     ) throws {
         let trimmedModel = transcriptionModel.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedModel = trimmedModel.isEmpty ? "whisper-large-v3" : trimmedModel
+
+        let trimmedLanguage = transcriptionLanguage?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedLanguage: String? = (trimmedLanguage?.isEmpty == false) ? trimmedLanguage : nil
 
         let kind = try TranscriptionBackendKind.parse(baseURL: baseURL)
         switch kind {
@@ -29,7 +33,10 @@ class TranscriptionService {
             let parsed = LocalBackendIdentifier.parse(identifier)
             switch parsed.runtime {
             case "whisperkit":
-                self.backend = WhisperKitBackend(modelVariant: parsed.modelVariant)
+                self.backend = WhisperKitBackend(
+                    modelVariant: parsed.modelVariant,
+                    language: resolvedLanguage
+                )
             default:
                 self.backend = LocalTranscriptionBackend(identifier: identifier)
             }
