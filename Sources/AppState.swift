@@ -165,6 +165,10 @@ private enum SessionIntent {
 final class AppState: ObservableObject, @unchecked Sendable {
     private let apiKeyStorageKey = "groq_api_key"
     private let apiBaseURLStorageKey = "api_base_url"
+    private let transcriptionBaseURLStorageKey = "transcription_base_url"
+    private let llmBaseURLStorageKey = "llm_base_url"
+    private let transcriptionAPIKeyStorageKey = "transcription_api_key"
+    private let llmAPIKeyStorageKey = "llm_api_key"
     private let transcriptionModelStorageKey = "transcription_model"
     private let postProcessingModelStorageKey = "post_processing_model"
     private let postProcessingFallbackModelStorageKey = "post_processing_fallback_model"
@@ -213,6 +217,50 @@ final class AppState: ObservableObject, @unchecked Sendable {
             persistAPIBaseURL(apiBaseURL)
             rebuildContextService()
         }
+    }
+
+    @Published var transcriptionBaseURL: String {
+        didSet {
+            persistOptionalEndpoint(transcriptionBaseURL, account: transcriptionBaseURLStorageKey)
+        }
+    }
+
+    @Published var llmBaseURL: String {
+        didSet {
+            persistOptionalEndpoint(llmBaseURL, account: llmBaseURLStorageKey)
+            rebuildContextService()
+        }
+    }
+
+    @Published var transcriptionAPIKey: String {
+        didSet {
+            persistOptionalEndpoint(transcriptionAPIKey, account: transcriptionAPIKeyStorageKey)
+        }
+    }
+
+    @Published var llmAPIKey: String {
+        didSet {
+            persistOptionalEndpoint(llmAPIKey, account: llmAPIKeyStorageKey)
+            rebuildContextService()
+        }
+    }
+
+    /// Effective URL used by TranscriptionService — falls back to legacy
+    /// `apiBaseURL` when the transcription-specific override is empty.
+    var effectiveTranscriptionBaseURL: String {
+        Self.resolveEndpoint(specific: transcriptionBaseURL, legacy: apiBaseURL)
+    }
+
+    var effectiveLLMBaseURL: String {
+        Self.resolveEndpoint(specific: llmBaseURL, legacy: apiBaseURL)
+    }
+
+    var effectiveTranscriptionAPIKey: String {
+        Self.resolveEndpoint(specific: transcriptionAPIKey, legacy: apiKey)
+    }
+
+    var effectiveLLMAPIKey: String {
+        Self.resolveEndpoint(specific: llmAPIKey, legacy: apiKey)
     }
 
     @Published var transcriptionModel: String {
@@ -413,6 +461,12 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let hasCompletedSetup = UserDefaults.standard.bool(forKey: "hasCompletedSetup")
         let apiKey = Self.loadStoredAPIKey(account: apiKeyStorageKey)
         let apiBaseURL = Self.loadStoredAPIBaseURL(account: "api_base_url")
+        let transcriptionBaseURL = Self.loadStoredOptionalEndpoint(account: transcriptionBaseURLStorageKey)
+        let llmBaseURL = Self.loadStoredOptionalEndpoint(account: llmBaseURLStorageKey)
+        let transcriptionAPIKey = Self.loadStoredOptionalEndpoint(account: transcriptionAPIKeyStorageKey)
+        let llmAPIKey = Self.loadStoredOptionalEndpoint(account: llmAPIKeyStorageKey)
+        let initialLLMBaseURL = Self.resolveEndpoint(specific: llmBaseURL, legacy: apiBaseURL)
+        let initialLLMAPIKey = Self.resolveEndpoint(specific: llmAPIKey, legacy: apiKey)
         let transcriptionModel = UserDefaults.standard.string(forKey: transcriptionModelStorageKey) ?? Self.defaultTranscriptionModel
         let postProcessingModel = UserDefaults.standard.string(forKey: postProcessingModelStorageKey) ?? Self.defaultPostProcessingModel
         let postProcessingFallbackModel = UserDefaults.standard.string(forKey: postProcessingFallbackModelStorageKey) ?? Self.defaultPostProcessingFallbackModel
@@ -473,14 +527,18 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let selectedMicrophoneID = UserDefaults.standard.string(forKey: selectedMicrophoneStorageKey) ?? "default"
 
         self.contextService = AppContextService(
-            apiKey: apiKey,
-            baseURL: apiBaseURL,
+            apiKey: initialLLMAPIKey,
+            baseURL: initialLLMBaseURL,
             customContextPrompt: customContextPrompt,
             contextModel: contextModel
         )
         self.hasCompletedSetup = hasCompletedSetup
         self.apiKey = apiKey
         self.apiBaseURL = apiBaseURL
+        self.transcriptionBaseURL = transcriptionBaseURL
+        self.llmBaseURL = llmBaseURL
+        self.transcriptionAPIKey = transcriptionAPIKey
+        self.llmAPIKey = llmAPIKey
         self.transcriptionModel = transcriptionModel
         self.postProcessingModel = postProcessingModel
         self.postProcessingFallbackModel = postProcessingFallbackModel
@@ -554,7 +612,33 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// Persist an opt-in transcription/LLM override. Empty means "follow the
+    /// legacy apiBaseURL/apiKey" — delete the stored value so resolveEndpoint
+    /// falls back.
+    private func persistOptionalEndpoint(_ value: String, account: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            AppSettingsStorage.delete(account: account)
+        } else {
+            AppSettingsStorage.save(trimmed, account: account)
+        }
+    }
+
+    private static func loadStoredOptionalEndpoint(account: String) -> String {
+        guard let stored = AppSettingsStorage.load(account: account) else { return "" }
+        return stored.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     static let defaultAPIBaseURL = "https://api.groq.com/openai/v1"
+
+    /// Resolves an endpoint value by falling back to a legacy source when the
+    /// specific value is empty or whitespace-only. Used by Step 1 split to keep
+    /// a single legacy `apiBaseURL`/`apiKey` working while users opt in to
+    /// separate transcription and LLM providers.
+    static func resolveEndpoint(specific: String, legacy: String) -> String {
+        let trimmed = specific.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? legacy : trimmed
+    }
 
     private struct StoredShortcutConfiguration {
         let hold: ShortcutBinding
@@ -601,8 +685,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
     private func rebuildContextService() {
         contextService = AppContextService(
-            apiKey: apiKey,
-            baseURL: apiBaseURL,
+            apiKey: effectiveLLMAPIKey,
+            baseURL: effectiveLLMBaseURL,
             customContextPrompt: customContextPrompt,
             contextModel: contextModel
         )
@@ -702,8 +786,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
         )
 
         let postProcessingService = PostProcessingService(
-            apiKey: apiKey,
-            baseURL: apiBaseURL,
+            apiKey: effectiveLLMAPIKey,
+            baseURL: effectiveLLMBaseURL,
             preferredModel: postProcessingModel,
             preferredFallbackModel: postProcessingFallbackModel
         )
@@ -713,8 +797,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
         Task {
             do {
                 let transcriptionService = try TranscriptionService(
-                    apiKey: apiKey,
-                    baseURL: apiBaseURL,
+                    apiKey: effectiveTranscriptionAPIKey,
+                    baseURL: effectiveTranscriptionBaseURL,
                     transcriptionModel: transcriptionModel
                 )
                 let rawTranscript = try await transcriptionService.transcribe(fileURL: audioURL)
@@ -1708,8 +1792,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
             }
 
         let postProcessingService = PostProcessingService(
-            apiKey: apiKey,
-            baseURL: apiBaseURL,
+            apiKey: effectiveLLMAPIKey,
+            baseURL: effectiveLLMBaseURL,
             preferredModel: postProcessingModel,
             preferredFallbackModel: postProcessingFallbackModel
         )
@@ -1718,8 +1802,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
             self.transcriptionTask = Task {
                 do {
                     let transcriptionService = try TranscriptionService(
-                        apiKey: self.apiKey,
-                        baseURL: self.apiBaseURL,
+                        apiKey: self.effectiveTranscriptionAPIKey,
+                        baseURL: self.effectiveTranscriptionBaseURL,
                         transcriptionModel: self.transcriptionModel
                     )
                     async let transcript = transcriptionService.transcribe(fileURL: transcriptionFileURL)
