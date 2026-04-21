@@ -34,6 +34,13 @@ struct SetupView: View {
     @State private var llmSetupChoice: LocalLLMModelChoice = .default
     @State private var useGemmaInSetup: Bool = true
     @State private var downloadsKickedOff: Bool = false
+    // True once the model is not just downloaded but also fully loaded +
+    // ANE-specialised (for Whisper) / KV-cache-primed (for Gemma). The
+    // post-download "Preparing..." phase can take 3-7 min on first launch;
+    // without this gate the user reaches the test step too early and hits
+    // a silent "Transcribing..." stall.
+    @State private var whisperReadyForTest: Bool = false
+    @State private var llmReadyForTest: Bool = false
     @StateObject private var githubCache = GitHubMetadataCache.shared
 
     // Test transcription state
@@ -553,6 +560,45 @@ struct SetupView: View {
             } else if whisperDownloadError != nil || llmDownloadError != nil {
                 Button("Retry") { startDownloads() }
                     .buttonStyle(.bordered)
+            } else if downloadDoneAwaitingPrewarm {
+                VStack(spacing: 10) {
+                    HStack(spacing: 10) {
+                        ProgressView().controlSize(.small)
+                        Text("Preparing models for the Neural Engine…")
+                            .font(.callout.weight(.medium))
+                    }
+                    Text("First-run compilation — takes about 3 to 7 minutes on Apple Silicon. The app is working even if it looks idle; please don't quit.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Divider().padding(.vertical, 2)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Practice while you wait", systemImage: "text.bubble")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.blue)
+                        Text("When the next step unlocks, try reading this aloud to test transcription:")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("\u{201C}Hi, I just set up GemmaFlow. Let\u{2019}s see how it handles a natural sentence with punctuation, numbers like 2026, and technical words such as kubernetes or API.\u{201D}")
+                            .font(.callout.italic())
+                            .foregroundStyle(.primary)
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color(nsColor: .textBackgroundColor))
+                            )
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.blue.opacity(0.08))
+                )
             } else {
                 Text("Downloads continue in the background — it's OK to leave this open.")
                     .font(.caption)
@@ -660,10 +706,25 @@ struct SetupView: View {
     }
 
     private var downloadModelsReady: Bool {
-        let whisperReady = whisperKitDownloads.cachedFolder(for: whisperSetupChoice.whisperKitIdentifier) != nil
-        if !useGemmaInSetup { return whisperReady }
-        let llmReady = llmDownloads.isReady(modelId: llmSetupChoice.mlxModelId)
-        return whisperReady && llmReady
+        // Wait for prewarm-complete, not just download-complete. Download
+        // only gets you the files on disk; ANE specialisation (Whisper) and
+        // KV-cache priming (Gemma) run after that and add a few minutes on
+        // first launch. Exposing Continue before those finish traps the
+        // user on a silent "Transcribing..." at the test step.
+        if !useGemmaInSetup { return whisperReadyForTest }
+        return whisperReadyForTest && llmReadyForTest
+    }
+
+    /// True when the files are on disk but the model hasn't finished the
+    /// ANE/KV-cache priming yet. Drives the "Preparing..." UI so the user
+    /// knows the app is still working, not frozen.
+    private var downloadDoneAwaitingPrewarm: Bool {
+        let whisperDownloaded = whisperKitDownloads.cachedFolder(for: whisperSetupChoice.whisperKitIdentifier) != nil
+        let whisperPrewarmPending = whisperDownloaded && !whisperReadyForTest
+        if !useGemmaInSetup { return whisperPrewarmPending }
+        let llmDownloaded = llmDownloads.isReady(modelId: llmSetupChoice.mlxModelId)
+        let llmPrewarmPending = llmDownloaded && !llmReadyForTest
+        return (whisperDownloaded && llmDownloaded) && (whisperPrewarmPending || llmPrewarmPending)
     }
 
     /// User tapped "Start Download". Persists their picks to AppState
@@ -681,18 +742,26 @@ struct SetupView: View {
     private func kickOffModelDownloads() {
         whisperDownloadError = nil
         llmDownloadError = nil
+        whisperReadyForTest = false
+        llmReadyForTest = false
 
         let whisperVariant = whisperSetupChoice.whisperKitIdentifier
-        if whisperKitDownloads.cachedFolder(for: whisperVariant) == nil {
-            whisperDownloadStarted = true
-            Task.detached(priority: .userInitiated) {
-                do {
-                    _ = try await WhisperKitInstancePool.shared.loadOrReturn(modelVariant: whisperVariant)
-                } catch {
-                    await MainActor.run {
-                        whisperDownloadError = error.localizedDescription
-                        whisperDownloadStarted = false
-                    }
+        whisperDownloadStarted = true
+        Task.detached(priority: .userInitiated) {
+            do {
+                // `loadOrReturn` both downloads *and* runs the ANE prewarm
+                // (via `prewarm: true` in WhisperKitConfig). When it returns,
+                // the pipeline is compiled and cached — the subsequent
+                // `transcribe()` during the test step runs in seconds
+                // instead of a 3-7 min silent first-compile.
+                _ = try await WhisperKitInstancePool.shared.loadOrReturn(modelVariant: whisperVariant)
+                await MainActor.run {
+                    whisperReadyForTest = true
+                }
+            } catch {
+                await MainActor.run {
+                    whisperDownloadError = error.localizedDescription
+                    whisperDownloadStarted = false
                 }
             }
         }
@@ -700,19 +769,20 @@ struct SetupView: View {
         guard useGemmaInSetup else { return }
 
         let llmModelId = llmSetupChoice.mlxModelId
-        if !llmDownloads.isReady(modelId: llmModelId) {
-            llmDownloadStarted = true
-            Task.detached(priority: .userInitiated) {
-                do {
-                    _ = try await MLXModelContainerPool.shared.loadOrReturnWithPrimedCache(
-                        modelId: llmModelId,
-                        systemPrompt: PostProcessingService.localDictationSystemPrompt
-                    )
-                } catch {
-                    await MainActor.run {
-                        llmDownloadError = error.localizedDescription
-                        llmDownloadStarted = false
-                    }
+        llmDownloadStarted = true
+        Task.detached(priority: .userInitiated) {
+            do {
+                _ = try await MLXModelContainerPool.shared.loadOrReturnWithPrimedCache(
+                    modelId: llmModelId,
+                    systemPrompt: PostProcessingService.localDictationSystemPrompt
+                )
+                await MainActor.run {
+                    llmReadyForTest = true
+                }
+            } catch {
+                await MainActor.run {
+                    llmDownloadError = error.localizedDescription
+                    llmDownloadStarted = false
                 }
             }
         }
