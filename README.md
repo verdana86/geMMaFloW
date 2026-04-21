@@ -12,6 +12,12 @@
   <sub>Apple Silicon · macOS 14+ · MIT licensed</sub>
 </p>
 
+<p align="center">
+  <a href="https://github.com/verdana86/geMMaFloW/releases/latest">
+    <img src="https://img.shields.io/github/v/release/verdana86/geMMaFloW?include_prereleases&label=download%20DMG&color=blue&style=for-the-badge" alt="Download latest release">
+  </a>
+</p>
+
 ---
 
 <p align="center">
@@ -21,6 +27,20 @@
 <p align="center">
   <i>Demo preserved from upstream <a href="https://github.com/zachlatta/freeflow">FreeFlow</a> — the UX is identical, only the backend changed (local WhisperKit + Gemma 4 instead of cloud Groq).</i>
 </p>
+
+---
+
+## Download & install
+
+Grab the latest DMG from the [**Releases page**](https://github.com/verdana86/geMMaFloW/releases/latest) → `geMMaFloW.dmg`.
+
+1. Open the DMG, drag **geMMaFloW** into **Applications**.
+2. First launch: macOS will say the developer can't be verified — the DMG is signed with a local developer identity, not Apple-notarised yet. **Right-click the app icon → Open** (or open **System Settings → Privacy & Security → Open Anyway**).
+3. Run the in-app setup wizard once. It downloads Whisper + Gemma (~6.5 GB) and compiles them for your Neural Engine (3–7 min the first time). The wizard shows a sentence you can read aloud while the models warm up.
+
+Requires macOS 14+ on Apple Silicon (M1/M2/M3/M4/M5). ~7 GB free disk, 16 GB RAM recommended.
+
+Prefer building from source? See [Build from source](#build-from-source) below.
 
 ---
 
