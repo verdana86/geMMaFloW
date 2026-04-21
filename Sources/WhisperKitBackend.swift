@@ -68,7 +68,13 @@ actor WhisperKitInstancePool {
             return existing
         }
         let folder = try await WhisperKitDownloadManager.shared.ensureModel(variant: resolvedVariant)
-        let config = WhisperKitConfig(modelFolder: folder.path)
+        // `prewarm: true` forces CoreML ANE kernel specialization to happen
+        // during load instead of during the first `transcribe` call. On a
+        // cold Large install that first-inference specialization can take
+        // 3-7 minutes; pushing it into load time means the user pays that
+        // wait under a visible "downloading/loading models…" UI instead of
+        // a silent "Transcribing…" spinner at the test step.
+        let config = WhisperKitConfig(modelFolder: folder.path, prewarm: true)
         let pipeline = try await WhisperKit(config)
         cache[resolvedVariant] = pipeline
         return pipeline

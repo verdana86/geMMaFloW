@@ -93,7 +93,7 @@ Output hygiene:
 - Never prepend boilerplate such as "Here is the clean transcript".
 - If the transcript is empty or only filler, return exactly: EMPTY
 """
-    static let defaultSystemPromptDate = "2026-04-08"
+    static let defaultSystemPromptDate = "2026-04-21"
 
     /// Concise dictation-cleanup prompt for local Gemma 4B-class models.
     /// Shorter prompt → faster prompt processing on M-series Metal GPU.
@@ -111,7 +111,11 @@ Strict rules:
 - Self-corrections across languages ("X, no actually Y" / "nu, de fapt Y" / "no perdón Y") → keep only the final version.
 - Convert dictated punctuation: "comma" → ",", "period" → ".".
 - Developer syntax when clearly intended: "underscore" → "_", "dash dash fix" → "--fix".
-- No translation. No markdown. No quotes. No explanations.
+- Infer punctuation from spoken cadence and intent, even when not explicitly dictated: short pauses → commas; sentence boundaries → periods; trailing/unfinished thoughts → "…"; rhetorical or interrogative rises → "?"; strong emphasis → "!".
+- Break clear run-on sentences into multiple sentences when a pause marks a natural boundary. Do not over-segment: keep the speaker's rhythm.
+- When the speaker clearly enumerates items ("first… second… third…", "uno, due, tre", "primo punto… secondo punto…"), format the items as a Markdown bullet list with "- " per item, one item per line. Use a numbered list ("1. ", "2. ") only if the speaker explicitly numbers them.
+- Apply language-appropriate punctuation conventions (e.g. Spanish "¿…?" / "¡…!" only when the speaker is speaking Spanish).
+- No translation. No quotes. No explanations. No markdown except the bullet/numbered list formatting described above.
 - If RAW_TRANSCRIPTION is empty or only filler, return exactly: EMPTY
 """
     static let commandModeSystemPrompt = """

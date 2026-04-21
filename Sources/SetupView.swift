@@ -30,6 +30,10 @@ struct SetupView: View {
     @State private var llmDownloadStarted = false
     @State private var whisperDownloadError: String?
     @State private var llmDownloadError: String?
+    @State private var whisperSetupChoice: WhisperKitModelChoice = .default
+    @State private var llmSetupChoice: LocalLLMModelChoice = .default
+    @State private var useGemmaInSetup: Bool = true
+    @State private var downloadsKickedOff: Bool = false
     @StateObject private var githubCache = GitHubMetadataCache.shared
 
     // Test transcription state
@@ -56,10 +60,13 @@ struct SetupView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            currentStepView
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.horizontal, 40)
-                .padding(.vertical, 32)
+            ScrollView {
+                currentStepView
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 40)
+                    .padding(.vertical, 32)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Divider()
 
@@ -455,120 +462,228 @@ struct SetupView: View {
     }
 
     var downloadModelsStep: some View {
-        let whisperVariant = WhisperKitModelChoice.default.whisperKitIdentifier
-        let llmModelId = LocalLLMModelChoice.default.mlxModelId
+        let whisperVariant = whisperSetupChoice.whisperKitIdentifier
+        let llmModelId = llmSetupChoice.mlxModelId
         let whisperReady = whisperKitDownloads.cachedFolder(for: whisperVariant) != nil
         let llmReady = llmDownloads.isReady(modelId: llmModelId)
 
-        return VStack(spacing: 24) {
+        return VStack(spacing: 22) {
             Image(systemName: "arrow.down.circle.fill")
                 .font(.system(size: 50))
                 .foregroundStyle(.blue)
 
-            Text("Download Models")
+            Text("Choose Your Models")
                 .font(.title)
                 .fontWeight(.bold)
 
-            Text("geMMaFloW downloads the WhisperKit and Gemma models now so the first dictation is instant. You can switch variants later in Settings.")
+            Text("Pick the Whisper and (optional) Gemma variants you want. They'll download locally — nothing leaves your Mac. You can switch later in Settings.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
+                .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
 
-            VStack(spacing: 12) {
-                downloadRow(
-                    title: WhisperKitModelChoice.default.displayName,
-                    subtitle: "Speech-to-text",
-                    isDownloading: whisperKitDownloads.isDownloading && whisperKitDownloads.currentVariant == whisperVariant,
-                    progress: whisperKitDownloads.progressFraction,
-                    isReady: whisperReady,
-                    error: whisperDownloadError ?? whisperKitDownloads.errorMessage
-                )
+            VStack(spacing: 14) {
+                modelPickerCard(
+                    title: "Transcription (Whisper)",
+                    subtitle: "Speech-to-text. Larger = more accurate, smaller = faster."
+                ) {
+                    Picker("", selection: $whisperSetupChoice) {
+                        ForEach(WhisperKitModelChoice.allCases) { choice in
+                            Text(choice.displayName).tag(choice)
+                        }
+                    }
+                    .labelsHidden()
+                    .disabled(downloadsKickedOff)
 
-                downloadRow(
-                    title: LocalLLMModelChoice.default.displayName,
-                    subtitle: "Transcript cleanup",
-                    isDownloading: llmDownloads.isDownloading && llmDownloads.currentModelId == llmModelId,
-                    progress: llmDownloads.progressFraction,
-                    isReady: llmReady,
-                    error: llmDownloadError ?? llmDownloads.errorMessage
-                )
+                    downloadRow(
+                        title: whisperSetupChoice.displayName,
+                        subtitle: "Speech-to-text",
+                        isDownloading: whisperKitDownloads.isDownloading && whisperKitDownloads.currentVariant == whisperVariant,
+                        progress: whisperKitDownloads.progressFraction,
+                        isReady: whisperReady,
+                        error: whisperDownloadError ?? whisperKitDownloads.errorMessage,
+                        hideIfIdle: !downloadsKickedOff
+                    )
+                }
+
+                modelPickerCard(
+                    title: "Post-processing (Gemma)",
+                    subtitle: "Cleans up the raw transcript — fixes punctuation, filler words, duplicates. Adds ~1-2s of latency per dictation."
+                ) {
+                    Toggle("Use Gemma to clean up transcripts", isOn: $useGemmaInSetup)
+                        .toggleStyle(.switch)
+                        .disabled(downloadsKickedOff)
+
+                    if useGemmaInSetup {
+                        Picker("", selection: $llmSetupChoice) {
+                            ForEach(LocalLLMModelChoice.allCases) { choice in
+                                Text(choice.displayName).tag(choice)
+                            }
+                        }
+                        .labelsHidden()
+                        .disabled(downloadsKickedOff)
+
+                        downloadRow(
+                            title: llmSetupChoice.displayName,
+                            subtitle: "Transcript cleanup",
+                            isDownloading: llmDownloads.isDownloading && llmDownloads.currentModelId == llmModelId,
+                            progress: llmDownloads.progressFraction,
+                            isReady: llmReady,
+                            error: llmDownloadError ?? llmDownloads.errorMessage,
+                            hideIfIdle: !downloadsKickedOff
+                        )
+                    }
+                }
             }
-            .frame(maxWidth: 400)
+            .frame(maxWidth: 440)
 
-            if downloadModelsReady {
+            if !downloadsKickedOff {
+                Button {
+                    startDownloads()
+                } label: {
+                    Text("Start Download")
+                        .padding(.horizontal, 12)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+            } else if downloadModelsReady {
                 Label("Ready — continue to the test step.", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
                     .font(.callout)
             } else if whisperDownloadError != nil || llmDownloadError != nil {
-                Button("Retry") { kickOffModelDownloads() }
+                Button("Retry") { startDownloads() }
                     .buttonStyle(.bordered)
             } else {
-                Text("You can leave this open — downloads continue in the background.")
+                Text("Downloads continue in the background — it's OK to leave this open.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
         }
         .onAppear {
-            kickOffModelDownloads()
+            if let current = WhisperKitModelChoice.fromSentinelBaseURL(appState.transcriptionBaseURL) {
+                whisperSetupChoice = current
+            }
+            if let current = LocalLLMModelChoice.fromSentinelBaseURL(appState.llmBaseURL) {
+                llmSetupChoice = current
+            }
+            useGemmaInSetup = appState.postProcessingEnabled
+        }
+        // Persist picker + toggle choices on change, not only when the
+        // Start Download button is pressed — so a user that skips the
+        // download step (Gemma off, lazy Whisper) still has their picks
+        // saved to UserDefaults.
+        .onChange(of: whisperSetupChoice) { newValue in
+            let url = newValue.sentinelBaseURL
+            if appState.transcriptionBaseURL != url {
+                appState.transcriptionBaseURL = url
+            }
+        }
+        .onChange(of: llmSetupChoice) { newValue in
+            let url = newValue.sentinelBaseURL
+            if appState.llmBaseURL != url {
+                appState.llmBaseURL = url
+            }
+        }
+        .onChange(of: useGemmaInSetup) { newValue in
+            if appState.postProcessingEnabled != newValue {
+                appState.postProcessingEnabled = newValue
+            }
         }
     }
 
+    private func modelPickerCard<Content: View>(
+        title: String,
+        subtitle: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.headline)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            content()
+        }
+        .padding(14)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+        .cornerRadius(10)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
     private func downloadRow(
         title: String,
         subtitle: String,
         isDownloading: Bool,
         progress: Double,
         isReady: Bool,
-        error: String?
+        error: String?,
+        hideIfIdle: Bool = false
     ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.headline)
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if isReady {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                } else if isDownloading {
-                    Text("\(Int(progress * 100))%")
-                        .font(.caption.monospacedDigit())
+        if hideIfIdle && !isDownloading && !isReady && error == nil {
+            EmptyView()
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(isReady ? "Already downloaded" : (isDownloading ? "Downloading…" : "Waiting"))
+                        .font(.caption)
                         .foregroundStyle(.secondary)
-                } else if error != nil {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                } else {
-                    ProgressView().controlSize(.small)
+                    Spacer()
+                    if isReady {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    } else if isDownloading {
+                        Text("\(Int(progress * 100))%")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    } else if error != nil {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
                 }
-            }
-            if isDownloading {
-                ProgressView(value: progress).progressViewStyle(.linear)
-            }
-            if let error {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
+                if isDownloading {
+                    ProgressView(value: progress).progressViewStyle(.linear)
+                }
+                if let error {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
-        .padding(12)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(8)
     }
 
     private var downloadModelsReady: Bool {
-        let whisperReady = whisperKitDownloads.cachedFolder(for: WhisperKitModelChoice.default.whisperKitIdentifier) != nil
-        let llmReady = llmDownloads.isReady(modelId: LocalLLMModelChoice.default.mlxModelId)
+        let whisperReady = whisperKitDownloads.cachedFolder(for: whisperSetupChoice.whisperKitIdentifier) != nil
+        if !useGemmaInSetup { return whisperReady }
+        let llmReady = llmDownloads.isReady(modelId: llmSetupChoice.mlxModelId)
         return whisperReady && llmReady
+    }
+
+    /// User tapped "Start Download". Persists their picks to AppState
+    /// (including the Gemma on/off toggle) and kicks off the actual
+    /// downloads. `downloadsKickedOff` then locks the pickers so they don't
+    /// mid-download change the target.
+    private func startDownloads() {
+        appState.transcriptionBaseURL = whisperSetupChoice.sentinelBaseURL
+        appState.llmBaseURL = llmSetupChoice.sentinelBaseURL
+        appState.postProcessingEnabled = useGemmaInSetup
+        downloadsKickedOff = true
+        kickOffModelDownloads()
     }
 
     private func kickOffModelDownloads() {
         whisperDownloadError = nil
         llmDownloadError = nil
 
-        let whisperVariant = WhisperKitModelChoice.default.whisperKitIdentifier
-        if whisperKitDownloads.cachedFolder(for: whisperVariant) == nil && !whisperDownloadStarted {
+        let whisperVariant = whisperSetupChoice.whisperKitIdentifier
+        if whisperKitDownloads.cachedFolder(for: whisperVariant) == nil {
             whisperDownloadStarted = true
             Task.detached(priority: .userInitiated) {
                 do {
@@ -582,8 +697,10 @@ struct SetupView: View {
             }
         }
 
-        let llmModelId = LocalLLMModelChoice.default.mlxModelId
-        if !llmDownloads.isReady(modelId: llmModelId) && !llmDownloadStarted {
+        guard useGemmaInSetup else { return }
+
+        let llmModelId = llmSetupChoice.mlxModelId
+        if !llmDownloads.isReady(modelId: llmModelId) {
             llmDownloadStarted = true
             Task.detached(priority: .userInitiated) {
                 do {
@@ -801,7 +918,12 @@ struct SetupView: View {
                 && accessibilityGranted
                 && appState.hasScreenRecordingPermission
         case .downloadModels:
-            return downloadModelsReady
+            // Always require that the user has clicked Start Download and
+            // the chosen models are ready. This way the next step (test
+            // dictation) uses exactly what the user selected — Whisper-only
+            // when Gemma is off, Whisper+Gemma when it's on — with CoreML
+            // ANE specialization already paid during the download phase.
+            return downloadsKickedOff && downloadModelsReady
         case .testTranscription:
             return testPhase == .done && !testTranscript.isEmpty && testError == nil
         default:
@@ -967,11 +1089,44 @@ struct SetupView: View {
                                 baseURL: appState.transcriptionBaseURL,
                                 transcriptionLanguage: appState.transcriptionLanguage
                             )
-                            let transcript = try await service.transcribe(fileURL: url)
+                            let rawTranscript = try await service.transcribe(fileURL: url)
+                            // When the user opted into Gemma in the Download
+                            // step, run the same post-processing they'll get
+                            // at dictation time — so the Setup test reflects
+                            // their actual trade-off (Whisper-only vs
+                            // Whisper+Gemma). On failure we fall back to the
+                            // raw transcript rather than blocking the test.
+                            let finalTranscript: String
+                            if appState.postProcessingEnabled {
+                                let pp = PostProcessingService(baseURL: appState.llmBaseURL)
+                                let emptyContext = AppContext(
+                                    appName: nil,
+                                    bundleIdentifier: nil,
+                                    windowTitle: nil,
+                                    selectedText: nil,
+                                    currentActivity: "Setup test dictation (no app context).",
+                                    contextPrompt: nil,
+                                    screenshotDataURL: nil,
+                                    screenshotMimeType: nil,
+                                    screenshotError: nil
+                                )
+                                if let cleaned = try? await pp.postProcess(
+                                    transcript: rawTranscript,
+                                    context: emptyContext,
+                                    customVocabulary: appState.customVocabulary,
+                                    customSystemPrompt: appState.customSystemPrompt
+                                ).transcript, !cleaned.isEmpty {
+                                    finalTranscript = cleaned
+                                } else {
+                                    finalTranscript = rawTranscript
+                                }
+                            } else {
+                                finalTranscript = rawTranscript
+                            }
                             await MainActor.run {
                                 testHotkeyHarness.isTranscribing = false
                                 testAudioRecorder = nil
-                                testTranscript = transcript
+                                testTranscript = finalTranscript
                                 withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
                                     testPhase = .done
                                 }

@@ -353,8 +353,13 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let llmBaseURL = UserDefaults.standard.string(forKey: llmBaseURLStorageKey)
             ?? Self.defaultLLMBaseURL
         let transcriptionLanguage = UserDefaults.standard.string(forKey: transcriptionLanguageStorageKey) ?? ""
+        // Default to false on fresh installs: we don't want the Gemma
+        // container auto-loading (and potentially auto-downloading ~3.5 GB)
+        // before the user has a chance to decide in the Setup wizard.
+        // Users opt into post-processing explicitly via the Setup toggle or
+        // from Settings later.
         let postProcessingEnabled = UserDefaults.standard.object(forKey: postProcessingEnabledStorageKey) == nil
-            ? true
+            ? false
             : UserDefaults.standard.bool(forKey: postProcessingEnabledStorageKey)
         let shortcuts = Self.loadShortcutConfiguration(
             holdKey: holdShortcutStorageKey,

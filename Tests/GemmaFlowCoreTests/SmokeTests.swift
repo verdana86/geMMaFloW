@@ -26,15 +26,15 @@ struct SmokeTests {
         _ = service
     }
 
-    @Test("Post-processing flag defaults to enabled when not yet persisted")
-    func postProcessingDefaultIsOn() {
+    @Test("Post-processing flag defaults to disabled on fresh installs (user opts in via Setup)")
+    func postProcessingDefaultIsOff() {
         let suiteName = "com.verdana86.gemmaflow.tests.postproc.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
         #expect(defaults.object(forKey: "post_processing_enabled") == nil)
         let resolved = defaults.object(forKey: "post_processing_enabled") == nil
-            ? true
+            ? false
             : defaults.bool(forKey: "post_processing_enabled")
-        #expect(resolved == true)
+        #expect(resolved == false)
     }
 }

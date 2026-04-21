@@ -9,15 +9,15 @@ enum LocalLLMModelChoice: String, CaseIterable, Identifiable {
     case gemma4E2B4bit
 
     /// Default when the user opts into local LLM without picking a preset.
-    /// E4B is the best quality at an acceptable 3.8 GB on disk.
+    /// E4B is the best quality at an acceptable ~5 GB on disk.
     static let `default`: LocalLLMModelChoice = .gemma4E4B4bit
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .gemma4E4B4bit: return "Gemma 4 E4B — best quality (~3.8 GB)"
-        case .gemma4E2B4bit: return "Gemma 4 E2B — lighter (~1.7 GB)"
+        case .gemma4E4B4bit: return "Gemma 4 E4B — best quality (~5 GB)"
+        case .gemma4E2B4bit: return "Gemma 4 E2B — lighter (~3.5 GB)"
         }
     }
 
