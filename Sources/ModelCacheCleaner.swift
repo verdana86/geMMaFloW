@@ -9,21 +9,22 @@ private let cleanerLog = Logger(subsystem: "com.verdana86.gemmaflow", category: 
 /// drop the in-RAM pipeline; this drops the on-disk weights).
 enum ModelCacheCleaner {
     private static var hfCacheRoot: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cache", isDirectory: true)
+        // WhisperKit uses swift-transformers' HubApi which also defaults to
+        // `<Documents>/huggingface/models/…` — the whisperkit-coreml repo is
+        // under that same tree, so both cleanup targets live here.
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
             .appendingPathComponent("huggingface", isDirectory: true)
-            .appendingPathComponent("hub", isDirectory: true)
+            .appendingPathComponent("models", isDirectory: true)
     }
 
     // MARK: - Gemma (MLX)
 
-    /// Deletes the entire HF repo folder for an MLX model id. Each Gemma
-    /// variant is a standalone repo (e.g. `mlx-community/gemma-4-e4b-it-4bit`
-    /// ↔ `mlx-community/gemma-4-e2b-it-4bit`) so removing the top-level repo
-    /// folder is sufficient — no shared blobs across variants.
+    /// Deletes the entire HubApi repo folder for an MLX model id. HubApi
+    /// stores each model as a flat directory at
+    /// `<Documents>/huggingface/models/<namespace>/<repo>/` with no blob
+    /// sharing across repos, so a plain `rm -rf` is safe.
     static func deleteGemmaCache(modelId: String) {
-        let slug = modelId.replacingOccurrences(of: "/", with: "--")
-        let repoDir = hfCacheRoot.appendingPathComponent("models--\(slug)", isDirectory: true)
+        let repoDir = hfCacheRoot.appendingPathComponent(modelId, isDirectory: true)
         guard FileManager.default.fileExists(atPath: repoDir.path) else {
             cleanerLog.info("no Gemma cache to delete at \(repoDir.path, privacy: .public)")
             return
@@ -40,55 +41,40 @@ enum ModelCacheCleaner {
     /// Approximate disk size of a cached Gemma model, for the
     /// "download ~X MB / free ~Y MB" confirmation dialog. Zero if missing.
     static func gemmaCacheSizeBytes(modelId: String) -> Int64 {
-        let slug = modelId.replacingOccurrences(of: "/", with: "--")
-        let repoDir = hfCacheRoot.appendingPathComponent("models--\(slug)", isDirectory: true)
+        let repoDir = hfCacheRoot.appendingPathComponent(modelId, isDirectory: true)
         return (try? folderSize(repoDir)) ?? 0
     }
 
     // MARK: - Whisper (WhisperKit-CoreML)
 
-    /// Delete a WhisperKit variant's snapshot subfolder. WhisperKit ships
-    /// all variants under a single HF repo (`argmaxinc/whisperkit-coreml`),
-    /// so we can't `rm -rf` the whole repo without taking out every variant.
-    /// We only unlink the variant folder under `snapshots/<rev>/<variant>/`;
-    /// the underlying content-addressed blobs in `blobs/` may linger until
-    /// `make prune-hf-cache` runs a GC pass. Acceptable tradeoff — blobs
-    /// without pointing snapshot links are ~dead weight, not re-downloaded.
+    /// WhisperKit uses HubApi under the hood, so all variants live as
+    /// subfolders under `<Documents>/huggingface/models/argmaxinc/whisperkit-coreml/<variant>/`.
+    /// Unlike the Python HF cache, there are no shared blobs between
+    /// variants — each subfolder is self-contained, so `rm -rf` is safe.
+    private static var whisperKitRepoRoot: URL {
+        hfCacheRoot
+            .appendingPathComponent("argmaxinc", isDirectory: true)
+            .appendingPathComponent("whisperkit-coreml", isDirectory: true)
+    }
+
     static func deleteWhisperKitVariant(variant: String) {
-        let repoDir = hfCacheRoot.appendingPathComponent("models--argmaxinc--whisperkit-coreml", isDirectory: true)
-        let snapshotsDir = repoDir.appendingPathComponent("snapshots", isDirectory: true)
-        guard FileManager.default.fileExists(atPath: snapshotsDir.path) else {
-            cleanerLog.info("no WhisperKit snapshots root at \(snapshotsDir.path, privacy: .public)")
+        let variantDir = whisperKitRepoRoot.appendingPathComponent(variant, isDirectory: true)
+        guard FileManager.default.fileExists(atPath: variantDir.path) else {
+            cleanerLog.info("no WhisperKit variant at \(variantDir.path, privacy: .public)")
             return
         }
-        let revisions = (try? FileManager.default.contentsOfDirectory(at: snapshotsDir, includingPropertiesForKeys: nil)) ?? []
-        for revisionDir in revisions {
-            let variantDir = revisionDir.appendingPathComponent(variant, isDirectory: true)
-            guard FileManager.default.fileExists(atPath: variantDir.path) else { continue }
-            do {
-                let size = (try? folderSize(variantDir)) ?? 0
-                try FileManager.default.removeItem(at: variantDir)
-                cleanerLog.info("deleted Whisper variant dir (\(size) bytes) at \(variantDir.path, privacy: .public)")
-            } catch {
-                cleanerLog.error("failed to delete Whisper variant at \(variantDir.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            }
+        do {
+            let size = (try? folderSize(variantDir)) ?? 0
+            try FileManager.default.removeItem(at: variantDir)
+            cleanerLog.info("deleted Whisper variant (\(size) bytes) at \(variantDir.path, privacy: .public)")
+        } catch {
+            cleanerLog.error("failed to delete Whisper variant at \(variantDir.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
 
     static func whisperKitVariantSizeBytes(variant: String) -> Int64 {
-        let repoDir = hfCacheRoot.appendingPathComponent("models--argmaxinc--whisperkit-coreml", isDirectory: true)
-        let snapshotsDir = repoDir.appendingPathComponent("snapshots", isDirectory: true)
-        guard let revisions = try? FileManager.default.contentsOfDirectory(at: snapshotsDir, includingPropertiesForKeys: nil) else {
-            return 0
-        }
-        var total: Int64 = 0
-        for revisionDir in revisions {
-            let variantDir = revisionDir.appendingPathComponent(variant, isDirectory: true)
-            if FileManager.default.fileExists(atPath: variantDir.path) {
-                total += (try? folderSize(variantDir)) ?? 0
-            }
-        }
-        return total
+        let variantDir = whisperKitRepoRoot.appendingPathComponent(variant, isDirectory: true)
+        return (try? folderSize(variantDir)) ?? 0
     }
 
     // MARK: - Helpers

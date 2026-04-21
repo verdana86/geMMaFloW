@@ -1,8 +1,8 @@
 import Foundation
+import Hub
 import MLXLLM
 import MLXLMCommon
 import MLXHuggingFace
-import HuggingFace
 import Tokenizers
 import os
 
@@ -179,16 +179,22 @@ actor MLXModelContainerPool {
 
         await LLMDownloadManager.shared.setDownloading(modelId: modelId)
 
-        // Bypass #huggingFaceLoadModelContainer macro (which hangs/crashes
-        // inside Downloader when loading Gemma 4). Resolve the HuggingFace
-        // cache snapshot path and load straight from that local directory
-        // using LLMModelFactory. The model must be pre-downloaded into
-        // ~/.cache/huggingface/hub/... (e.g. via `huggingface-cli download`).
         do {
+            // Ensure the HF snapshot is on disk. If it's already cached,
+            // this is a quick probe; otherwise it downloads the full repo
+            // via swift-huggingface and streams progress to the shared
+            // LLMDownloadManager so the UI progress bar advances.
+            try await Self.ensureDownloaded(modelId: modelId)
+
             llmLog.info("resolving local snapshot directory for \(modelId, privacy: .public)")
             let directory = try Self.resolveLocalSnapshotDirectory(for: modelId)
             llmLog.info("snapshot directory: \(directory.path, privacy: .public)")
 
+            // Bypass #huggingFaceLoadModelContainer macro (which hangs/
+            // crashes inside Downloader when loading Gemma 4). Load straight
+            // from the local directory using LLMModelFactory — now that
+            // ensureDownloaded has guaranteed the files exist, this is a
+            // pure local-disk load.
             llmLog.info("about to call LLMModelFactory.shared.loadContainer(from:using:)")
             let container = try await LLMModelFactory.shared.loadContainer(
                 from: directory,
@@ -203,6 +209,43 @@ actor MLXModelContainerPool {
             await LLMDownloadManager.shared.setError(error.localizedDescription)
             throw error
         }
+    }
+
+    /// Download the HF snapshot for an MLX model if it isn't already
+    /// cached locally. Uses swift-transformers `HubApi` (same path WhisperKit
+    /// uses) because the swift-huggingface `HubClient` silently skipped the
+    /// big LFS/xet-backed safetensors file on `mlx-community/gemma-*` repos.
+    /// Downloads land in `~/Documents/huggingface/models/<repo-id>/` — see
+    /// `resolveLocalSnapshotDirectory` for the matching read path.
+    static func ensureDownloaded(modelId: String) async throws {
+        let destination = hubApiModelDirectory(for: modelId)
+        let safetensorsPresent = (try? FileManager.default.contentsOfDirectory(atPath: destination.path))?
+            .contains(where: { $0.hasSuffix(".safetensors") }) ?? false
+        if safetensorsPresent {
+            llmLog.info("model \(modelId, privacy: .public) already downloaded — skip")
+            return
+        }
+
+        llmLog.info("downloading HF snapshot for \(modelId, privacy: .public) via HubApi")
+        _ = try await HubApi.shared.snapshot(from: modelId) { progress in
+            let fraction = progress.fractionCompleted
+            Task { @MainActor in
+                LLMDownloadManager.shared.setProgress(fraction)
+            }
+        }
+        llmLog.info("HF snapshot download complete for \(modelId, privacy: .public)")
+    }
+
+    /// HubApi stores downloads at `<Documents>/huggingface/models/<repo-id>/`
+    /// as a flat directory (no snapshots/<rev> wrapper). Kept in one place so
+    /// both `resolveLocalSnapshotDirectory` and `ModelCacheCleaner` agree on
+    /// where to look.
+    static func hubApiModelDirectory(for modelId: String) -> URL {
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return documents
+            .appendingPathComponent("huggingface", isDirectory: true)
+            .appendingPathComponent("models", isDirectory: true)
+            .appendingPathComponent(modelId, isDirectory: true)
     }
 
     /// Drop the cached `ModelContainer` and any primed KV caches for the
@@ -220,38 +263,20 @@ actor MLXModelContainerPool {
         }
     }
 
-    /// Resolve the HuggingFace Hub cache snapshot directory for a given
-    /// model repo id. Assumes the model has been pre-downloaded into
-    /// `~/.cache/huggingface/hub/models--<slug>/snapshots/<rev>/`.
+    /// Return the on-disk directory for a downloaded MLX model. Matches the
+    /// layout used by `ensureDownloaded` (swift-transformers `HubApi`): a
+    /// flat folder per repo at `<Documents>/huggingface/models/<repo-id>/`.
+    /// Throws if the expected weights file isn't present (treated as "need
+    /// to download").
     static func resolveLocalSnapshotDirectory(for modelId: String) throws -> URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let slug = modelId.replacingOccurrences(of: "/", with: "--")
-        let repoRoot = home
-            .appendingPathComponent(".cache", isDirectory: true)
-            .appendingPathComponent("huggingface", isDirectory: true)
-            .appendingPathComponent("hub", isDirectory: true)
-            .appendingPathComponent("models--\(slug)", isDirectory: true)
-
-        let refsMain = repoRoot.appendingPathComponent("refs").appendingPathComponent("main")
-        if let commitHash = try? String(contentsOf: refsMain, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !commitHash.isEmpty {
-            let snapshot = repoRoot
-                .appendingPathComponent("snapshots", isDirectory: true)
-                .appendingPathComponent(commitHash, isDirectory: true)
-            if FileManager.default.fileExists(atPath: snapshot.path) {
-                return snapshot
-            }
+        let directory = hubApiModelDirectory(for: modelId)
+        let contents = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        if contents.contains(where: { $0.hasSuffix(".safetensors") }) {
+            return directory
         }
-
-        // Fallback: pick the first subdirectory under snapshots/.
-        let snapshotsDir = repoRoot.appendingPathComponent("snapshots", isDirectory: true)
-        let contents = (try? FileManager.default.contentsOfDirectory(at: snapshotsDir, includingPropertiesForKeys: nil)) ?? []
-        if let first = contents.first {
-            return first
-        }
-
-        throw LLMBackendError.invalidResponse("Model not found in local HuggingFace cache: \(modelId). Run: huggingface-cli download \(modelId)")
+        throw LLMBackendError.invalidResponse(
+            "Model weights missing for \(modelId). Expected a *.safetensors file under \(directory.path)."
+        )
     }
 
     /// Map a stored model id (string from settings) to an MLX

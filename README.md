@@ -14,22 +14,26 @@
 
 ---
 
-## Why this fork exists
+## What is geMMaFloW?
 
-geMMaFloW is a personal fork of [FreeFlow](https://github.com/zachlatta/freeflow) by [Zach Latta](https://github.com/zachlatta).
+geMMaFloW is a macOS menu-bar dictation app. You hold a hotkey (`Fn` by default), talk, release, and a cleaned-up transcript gets pasted into whatever text field you were focused on — email, Slack, code editor, browser, anything. Think Wispr Flow, Superwhisper, or Monologue — but **nothing ever leaves your Mac**. No cloud, no API keys, no account, no telemetry. Speech recognition and text cleanup both run locally on Apple Silicon.
 
-FreeFlow is a lovely free alternative to Wispr Flow / Superwhisper / Monologue — same UX: hold `Fn`, talk, release, cleaned text appears in the active text field. But FreeFlow sends two things to [Groq](https://groq.com/)'s cloud every time you dictate:
+It's built for people for whom privacy isn't a nice-to-have: lawyers, doctors, journalists, consultants, or just anyone uncomfortable with the idea of a global hotkey that streams every dictation to someone else's server.
+
+## Why a fork?
+
+geMMaFloW is a personal fork of [FreeFlow](https://github.com/zachlatta/freeflow) by [Zach Latta](https://github.com/zachlatta), a lovely open-source alternative to the commercial dictation apps mentioned above. FreeFlow has the UX right — menu bar, hold-to-talk, context-aware cleanup — but it sends two things to [Groq](https://groq.com/)'s cloud every time you dictate:
 
 1. **Your raw audio**, to `whisper-large-v3` for transcription
-2. **The transcript + some context about the app you're dictating into**, to `gpt-oss-20b` (or Llama 4) for cleanup
+2. **The transcript + context about the app you're dictating into**, to `gpt-oss-20b` (or Llama 4) for cleanup
 
-Groq is fast and cheap (~$1/month under heavy use). But the audio leaves your computer, and the cleanup LLM sees whatever you just said plus hints about the window you were focused on. For a tool that sits on the global hotkey and sees *everything you dictate*, that tradeoff didn't sit right with me.
+Groq is fast and cheap (~$1/month under heavy use), and Zach's choice is perfectly reasonable. But the audio leaves your computer, and the cleanup LLM sees whatever you just said plus hints about the window you were focused on. For a tool that sits on the global hotkey and sees *everything you dictate all day long*, that tradeoff didn't sit right with me. I wanted the same UX with a stricter guarantee.
 
 So I replaced both cloud calls with on-device models:
 
 | Stage | FreeFlow upstream | **geMMaFloW** |
 |---|---|---|
-| Speech → text | Groq `whisper-large-v3` (cloud) | [**WhisperKit**](https://github.com/argmaxinc/WhisperKit) running on the Neural Engine |
+| Speech → text | Groq `whisper-large-v3` (cloud) | [**WhisperKit**](https://github.com/argmaxinc/WhisperKit) on the Neural Engine |
 | Text cleanup + context | Groq `gpt-oss-20b` / Llama 4 (cloud) | [**Gemma 4 E4B**](https://ai.google.dev/gemma) via [**MLX Swift**](https://github.com/ml-explore/mlx-swift) |
 | Active-app context inference | Groq `/chat/completions` | Local Accessibility API, no LLM call |
 | API keys required | Groq key | **none** |

@@ -124,13 +124,17 @@ clean-user-state:
 	@echo "  /Applications/$(APP_NAME).app"
 	@echo "  ~/Library/Caches/$(BUNDLE_ID)"
 	@echo "  ~/Library/Application Support/$(APP_NAME)"
-	@echo "  ~/.cache/huggingface/hub/models--argmaxinc--whisperkit-coreml"
-	@echo "  ~/.cache/huggingface/hub/models--mlx-community--gemma-*"
+	@echo "  ~/Documents/huggingface/models/argmaxinc/whisperkit-coreml"
+	@echo "  ~/Documents/huggingface/models/mlx-community/gemma-*"
+	@echo "  ~/.cache/huggingface/hub/models--argmaxinc--whisperkit-coreml (legacy)"
+	@echo "  ~/.cache/huggingface/hub/models--mlx-community--gemma-* (legacy)"
 	@echo "  TCC grants: Microphone, Accessibility, ScreenCapture"
 	@read -p "Continue? [y/N] " ans && [ "$$ans" = "y" ] || [ "$$ans" = "Y" ]
 	-rm -rf "/Applications/$(APP_NAME).app"
 	-rm -rf "$$HOME/Library/Caches/$(BUNDLE_ID)"
 	-rm -rf "$$HOME/Library/Application Support/$(APP_NAME)"
+	-rm -rf "$$HOME/Documents/huggingface/models/argmaxinc/whisperkit-coreml"
+	-find "$$HOME/Documents/huggingface/models/mlx-community" -maxdepth 1 -type d -name 'gemma*' -exec rm -rf {} + 2>/dev/null || true
 	-rm -rf "$$HOME/.cache/huggingface/hub/models--argmaxinc--whisperkit-coreml"
 	-find "$$HOME/.cache/huggingface/hub" -maxdepth 1 -type d -name 'models--mlx-community--gemma*' -exec rm -rf {} + 2>/dev/null || true
 	-tccutil reset Microphone $(BUNDLE_ID) 2>/dev/null || true
