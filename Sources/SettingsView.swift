@@ -167,8 +167,6 @@ struct SettingsView: View {
                     GeneralSettingsView()
                 case .prompts:
                     PromptsSettingsView()
-                case .macros:
-                    VoiceMacrosSettingsView()
                 case .runLog:
                     RunLogView()
                 }
@@ -944,6 +942,8 @@ struct MicrophoneOptionRow: View {
 
 struct PromptsSettingsView: View {
     @EnvironmentObject var appState: AppState
+    @State private var systemPromptDraft: String = ""
+    @State private var contextPromptDraft: String = ""
 
     var body: some View {
         ScrollView {
@@ -957,37 +957,114 @@ struct PromptsSettingsView: View {
             }
             .padding(24)
         }
+        .onAppear {
+            systemPromptDraft = appState.customSystemPrompt.isEmpty
+                ? PostProcessingService.localDictationSystemPrompt
+                : appState.customSystemPrompt
+            contextPromptDraft = appState.customContextPrompt.isEmpty
+                ? AppContextService.defaultContextPrompt
+                : appState.customContextPrompt
+        }
     }
 
     private var systemPromptSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Optimized for the bundled Gemma 4B model — not editable.")
+        let isCustom = !appState.customSystemPrompt.isEmpty
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("Controls how Gemma cleans up raw Whisper transcripts. Applied only when post-processing is enabled.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Text(PostProcessingService.localDictationSystemPrompt)
+            TextEditor(text: $systemPromptDraft)
                 .font(.system(.caption, design: .monospaced))
-                .textSelection(.enabled)
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(nsColor: .controlBackgroundColor))
-                .cornerRadius(6)
+                .frame(minHeight: 200, maxHeight: 400)
+                .padding(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                )
+                .onChange(of: systemPromptDraft) { newValue in
+                    commitSystemPrompt(newValue)
+                }
+
+            HStack {
+                Label(
+                    isCustom ? "Using custom prompt" : "Using default",
+                    systemImage: isCustom ? "pencil" : "checkmark.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(isCustom ? .blue : .secondary)
+
+                Spacer()
+
+                if isCustom {
+                    Button("Reset to Default") {
+                        systemPromptDraft = PostProcessingService.localDictationSystemPrompt
+                        appState.customSystemPrompt = ""
+                    }
+                    .font(.caption)
+                }
+            }
         }
     }
 
     private var contextPromptSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let isCustom = !appState.customContextPrompt.isEmpty
+        return VStack(alignment: .leading, spacing: 10) {
             Text("Tells the context model how to summarise the frontmost app's screenshot + metadata into the activity hint passed to post-processing.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Text(AppContextService.defaultContextPrompt)
+            TextEditor(text: $contextPromptDraft)
                 .font(.system(.caption, design: .monospaced))
-                .textSelection(.enabled)
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(nsColor: .controlBackgroundColor))
-                .cornerRadius(6)
+                .frame(minHeight: 160, maxHeight: 320)
+                .padding(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                )
+                .onChange(of: contextPromptDraft) { newValue in
+                    commitContextPrompt(newValue)
+                }
+
+            HStack {
+                Label(
+                    isCustom ? "Using custom prompt" : "Using default",
+                    systemImage: isCustom ? "pencil" : "checkmark.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(isCustom ? .blue : .secondary)
+
+                Spacer()
+
+                if isCustom {
+                    Button("Reset to Default") {
+                        contextPromptDraft = AppContextService.defaultContextPrompt
+                        appState.customContextPrompt = ""
+                    }
+                    .font(.caption)
+                }
+            }
+        }
+    }
+
+    /// Normalises the editor state into the stored preference. Empty /
+    /// whitespace-only input or a value identical to the default is stored
+    /// as "" so the app falls back to `PostProcessingService.localDictationSystemPrompt`.
+    private func commitSystemPrompt(_ value: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let defaultTrimmed = PostProcessingService.localDictationSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let target = (trimmed.isEmpty || trimmed == defaultTrimmed) ? "" : trimmed
+        if appState.customSystemPrompt != target {
+            appState.customSystemPrompt = target
+        }
+    }
+
+    private func commitContextPrompt(_ value: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let defaultTrimmed = AppContextService.defaultContextPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let target = (trimmed.isEmpty || trimmed == defaultTrimmed) ? "" : trimmed
+        if appState.customContextPrompt != target {
+            appState.customContextPrompt = target
         }
     }
 }
@@ -1509,153 +1586,3 @@ struct FlowLayout: Layout {
     }
 }
 
-// MARK: - Voice Macros Settings
-
-struct VoiceMacrosSettingsView: View {
-    @EnvironmentObject var appState: AppState
-    @State private var showingAddMacro = false
-    @State private var editingMacro: VoiceMacro?
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                SettingsCard("Voice Macros", icon: "music.mic") {
-                    macrosSection
-                }
-            }
-            .padding(24)
-        }
-        .sheet(isPresented: $showingAddMacro, onDismiss: { editingMacro = nil }) {
-            VoiceMacroEditorView(isPresented: $showingAddMacro, macro: $editingMacro)
-        }
-    }
-
-    private var macrosSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Bypass post-processing and immediately paste your predefined text.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button(action: { showingAddMacro = true }) {
-                    Text("Add Macro")
-                }
-            }
-
-            if appState.voiceMacros.isEmpty {
-                VStack {
-                    Image(systemName: "music.mic")
-                        .font(.system(size: 30))
-                        .foregroundStyle(.tertiary)
-                        .padding(.bottom, 4)
-                    Text("No Voice Macros Yet")
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
-                    Text("Click 'Add Macro' to define your first voice macro.")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 32)
-            } else {
-                VStack(spacing: 1) {
-                    ForEach(Array(appState.voiceMacros.enumerated()), id: \.element.id) { index, macro in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(macro.command)
-                                    .font(.headline)
-                                Spacer()
-                                Button("Edit") {
-                                    editingMacro = macro
-                                    showingAddMacro = true
-                                }
-                                .buttonStyle(.borderless)
-                                .font(.caption)
-                                
-                                Button("Delete") {
-                                    appState.voiceMacros.removeAll { $0.id == macro.id }
-                                }
-                                .buttonStyle(.borderless)
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                            }
-                            Text(macro.payload)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-                        .padding(12)
-                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.8))
-                    }
-                }
-                .cornerRadius(8)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.06), lineWidth: 1))
-            }
-        }
-    }
-}
-
-struct VoiceMacroEditorView: View {
-    @EnvironmentObject var appState: AppState
-    @Binding var isPresented: Bool
-    @Binding var macro: VoiceMacro?
-
-    @State private var command: String = ""
-    @State private var payload: String = ""
-
-    var body: some View {
-        VStack(spacing: 20) {
-            Text(macro == nil ? "Add Macro" : "Edit Macro")
-                .font(.headline)
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Voice Command (What you say)")
-                    .font(.caption.weight(.semibold))
-                TextField("e.g. debugging prompt", text: $command)
-                    .textFieldStyle(.roundedBorder)
-
-                Text("Text (What gets pasted)")
-                    .font(.caption.weight(.semibold))
-                    .padding(.top, 8)
-                TextEditor(text: $payload)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(height: 150)
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
-            }
-
-            HStack {
-                Button("Cancel") {
-                    isPresented = false
-                    macro = nil
-                }
-                Spacer()
-                Button("Save") {
-                    let newMacro = VoiceMacro(
-                        id: macro?.id ?? UUID(),
-                        command: command.trimmingCharacters(in: .whitespacesAndNewlines),
-                        payload: payload
-                    )
-                    
-                    if let existingIndex = appState.voiceMacros.firstIndex(where: { $0.id == newMacro.id }) {
-                        appState.voiceMacros[existingIndex] = newMacro
-                    } else {
-                        appState.voiceMacros.append(newMacro)
-                    }
-                    isPresented = false
-                    macro = nil
-                }
-                .disabled(command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || payload.isEmpty)
-                .buttonStyle(.borderedProminent)
-            }
-        }
-        .padding(20)
-        .frame(width: 400)
-        .onAppear {
-            if let m = macro {
-                command = m.command
-                payload = m.payload
-            }
-        }
-    }
-}

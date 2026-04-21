@@ -169,23 +169,17 @@ final class RecordingOverlayManager {
             return
         }
 
+        // First-time creation: show at final position directly (no slide-in
+        // animation). The spring easing used before added ~200ms of perceived
+        // latency between key press and visible overlay — bad for a dictation
+        // shortcut where instant feedback matters more than smooth motion.
         let panel = makeOverlayPanel(width: frame.width, height: frame.height)
         panel.hasShadow = false
         panel.ignoresMouseEvents = !overlayAcceptsMouseEvents
         panel.contentView = makeOverlayContent(frame: frame)
-
-        guard let screen = NSScreen.main else { return }
-
-        let hiddenFrame = NSRect(x: frame.origin.x, y: screen.frame.maxY, width: frame.width, height: frame.height)
-        panel.setFrame(hiddenFrame, display: true)
+        panel.setFrame(frame, display: true)
         panel.alphaValue = 1
         panel.orderFrontRegardless()
-
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.18
-            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.34, 1.56, 0.64, 1.0)
-            panel.animator().setFrame(frame, display: true)
-        }
 
         overlayWindow = panel
     }
@@ -281,10 +275,11 @@ final class RecordingOverlayManager {
         lockedOverlayWidth = nil
         overlayState.isCommandMode = false
         overlayState.showsTranscribingSpinner = false
-        if let panel = overlayWindow {
-            panel.orderOut(nil)
-            overlayWindow = nil
-        }
+        // Keep the NSPanel alive between dictations — recreating it costs
+        // ~50-100ms per press (alloc + contentView + initial layout). We hide
+        // it via orderOut and reuse on the next press so the fast path in
+        // showOverlayPanel (line ~164) runs every time after the first.
+        overlayWindow?.orderOut(nil)
     }
 }
 

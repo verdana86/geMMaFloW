@@ -8,21 +8,9 @@ import ScreenCaptureKit
 import os.log
 private let recordingLog = OSLog(subsystem: "com.verdana86.gemmaflow", category: "Recording")
 
-struct VoiceMacro: Codable, Identifiable, Equatable {
-    var id: UUID = UUID()
-    var command: String
-    var payload: String
-}
-
-struct PrecomputedMacro {
-    let original: VoiceMacro
-    let normalizedCommand: String
-}
-
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general
     case prompts
-    case macros
     case runLog
 
     var id: String { rawValue }
@@ -31,7 +19,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "General"
         case .prompts: return "Prompts"
-        case .macros: return "Voice Macros"
         case .runLog: return "Run Log"
         }
     }
@@ -40,7 +27,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "gearshape"
         case .prompts: return "text.bubble"
-        case .macros: return "music.mic"
         case .runLog: return "clock.arrow.circlepath"
         }
     }
@@ -173,10 +159,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private let savedToggleCustomShortcutStorageKey = "saved_toggle_custom_shortcut"
     private let customVocabularyStorageKey = "custom_vocabulary"
     private let selectedMicrophoneStorageKey = "selected_microphone_id"
+    private let customSystemPromptStorageKey = "custom_system_prompt"
     private let customContextPromptStorageKey = "custom_context_prompt"
     private let customContextPromptLastModifiedStorageKey = "custom_context_prompt_last_modified"
     private let alertSoundsEnabledStorageKey = "alert_sounds_enabled"
-    private let voiceMacrosStorageKey = "voice_macros"
     private let commandModeEnabledStorageKey = "command_mode_enabled"
     private let commandModeStyleStorageKey = "command_mode_style"
     private let commandModeManualModifierStorageKey = "command_mode_manual_modifier"
@@ -270,6 +256,14 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// When non-empty, overrides `PostProcessingService.localDictationSystemPrompt`
+    /// for transcript cleanup. Visible in Settings → Prompts.
+    @Published var customSystemPrompt: String {
+        didSet {
+            UserDefaults.standard.set(customSystemPrompt, forKey: customSystemPromptStorageKey)
+        }
+    }
+
     @Published var customContextPrompt: String {
         didSet {
             UserDefaults.standard.set(customContextPrompt, forKey: customContextPromptStorageKey)
@@ -290,17 +284,6 @@ final class AppState: ObservableObject, @unchecked Sendable {
     @Published var alertSoundsEnabled: Bool {
         didSet {
             UserDefaults.standard.set(alertSoundsEnabled, forKey: alertSoundsEnabledStorageKey)
-        }
-    }
-
-    private var precomputedMacros: [PrecomputedMacro] = []
-
-    @Published var voiceMacros: [VoiceMacro] = [] {
-        didSet {
-            if let data = try? JSONEncoder().encode(voiceMacros) {
-                UserDefaults.standard.set(data, forKey: voiceMacrosStorageKey)
-            }
-            precomputeMacros()
         }
     }
 
@@ -382,6 +365,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let savedToggleCustomShortcut = Self.loadShortcut(forKey: savedToggleCustomShortcutStorageKey)
             ?? (shortcuts.toggle.isCustom ? shortcuts.toggle : nil)
         let customVocabulary = UserDefaults.standard.string(forKey: customVocabularyStorageKey) ?? ""
+        let customSystemPrompt = UserDefaults.standard.string(forKey: customSystemPromptStorageKey) ?? ""
         let customContextPrompt = UserDefaults.standard.string(forKey: customContextPromptStorageKey) ?? ""
         let customContextPromptLastModified = UserDefaults.standard.string(forKey: customContextPromptLastModifiedStorageKey) ?? ""
         let isCommandModeEnabled = UserDefaults.standard.object(forKey: commandModeEnabledStorageKey) == nil
@@ -396,14 +380,6 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let alertSoundsEnabled = UserDefaults.standard.object(forKey: alertSoundsEnabledStorageKey) == nil
             ? true
             : UserDefaults.standard.bool(forKey: alertSoundsEnabledStorageKey)
-        
-        let initialMacros: [VoiceMacro]
-        if let data = UserDefaults.standard.data(forKey: "voice_macros"),
-           let decoded = try? JSONDecoder().decode([VoiceMacro].self, from: data) {
-            initialMacros = decoded
-        } else {
-            initialMacros = []
-        }
 
         let initialAccessibility = AXIsProcessTrusted()
         let initialScreenCapturePermission = CGPreflightScreenCaptureAccess()
@@ -436,16 +412,15 @@ final class AppState: ObservableObject, @unchecked Sendable {
         self.commandModeStyle = commandModeStyle
         self.commandModeManualModifier = commandModeManualModifier
         self.customVocabulary = customVocabulary
+        self.customSystemPrompt = customSystemPrompt
         self.customContextPrompt = customContextPrompt
         self.customContextPromptLastModified = customContextPromptLastModified
         self.alertSoundsEnabled = alertSoundsEnabled
-        self.voiceMacros = initialMacros
         self.pipelineHistory = savedHistory
         self.hasAccessibility = initialAccessibility
         self.hasScreenRecordingPermission = initialScreenCapturePermission
         self.launchAtLogin = SMAppService.mainApp.status == .enabled
         self.selectedMicrophoneID = selectedMicrophoneID
-        self.precomputeMacros()
 
         refreshAvailableMicrophones()
         installAudioDeviceObservers()
@@ -609,6 +584,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
         let postProcessingService = PostProcessingService(baseURL: llmBaseURL)
         let capturedCustomVocabulary = customVocabulary
+        let capturedCustomSystemPrompt = customSystemPrompt
 
         Task {
             do {
@@ -630,7 +606,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
                     intent: restoredIntent,
                     context: restoredContext,
                     postProcessingService: postProcessingService,
-                    customVocabulary: capturedCustomVocabulary
+                    customVocabulary: capturedCustomVocabulary,
+                    customSystemPrompt: capturedCustomSystemPrompt
                 )
                 finalTranscript = result.finalTranscript
                 processingStatus = result.outcome.statusMessage(isRetry: true)
@@ -1450,21 +1427,6 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func precomputeMacros() {
-        precomputedMacros = voiceMacros.map { macro in
-            PrecomputedMacro(
-                original: macro,
-                normalizedCommand: normalize(macro.command)
-            )
-        }
-    }
-
-    private func normalize(_ text: String) -> String {
-        let lowercased = text.lowercased()
-        let strippedPunctuation = lowercased.components(separatedBy: CharacterSet.punctuationCharacters).joined()
-        return strippedPunctuation.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     func playAlertSound(named name: String) {
         guard alertSoundsEnabled else { return }
 
@@ -1473,19 +1435,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
         sound?.play()
     }
 
-    private func findMatchingMacro(for transcript: String) -> VoiceMacro? {
-        let normalizedTranscript = normalize(transcript)
-        guard !normalizedTranscript.isEmpty else { return nil }
-
-        return precomputedMacros.first {
-            normalizedTranscript == $0.normalizedCommand
-        }?.original
-    }
-
     private enum TranscriptProcessingOutcome {
         case skippedEmptyRawTranscript
         case postProcessingDisabled
-        case voiceMacro(command: String)
         case postProcessingSucceeded
         case postProcessingFailedFallback
         case commandModeSucceeded(invocation: CommandInvocation)
@@ -1494,11 +1446,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
         func statusMessage(isRetry: Bool = false) -> String {
             switch self {
             case .skippedEmptyRawTranscript:
-                return "Skipped macros and post-processing for empty raw transcript"
+                return "Skipped post-processing for empty raw transcript"
             case .postProcessingDisabled:
                 return "Post-processing disabled, using raw Whisper transcript"
-            case .voiceMacro(let command):
-                return "Voice macro used: \(command)"
             case .postProcessingSucceeded:
                 return isRetry ? "Post-processing succeeded (retried)" : "Post-processing succeeded"
             case .postProcessingFailedFallback:
@@ -1518,7 +1468,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
         intent: SessionIntent,
         context: AppContext,
         postProcessingService: PostProcessingService,
-        customVocabulary: String
+        customVocabulary: String,
+        customSystemPrompt: String
     ) async -> (finalTranscript: String, outcome: TranscriptProcessingOutcome, prompt: String) {
         let trimmedRawTranscript = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -1541,11 +1492,6 @@ final class AppState: ObservableObject, @unchecked Sendable {
             }
         }
 
-        if let macro = findMatchingMacro(for: trimmedRawTranscript) {
-            os_log(.info, log: recordingLog, "Voice macro triggered: %{public}@", macro.command)
-            return (macro.payload, .voiceMacro(command: macro.command), "")
-        }
-
         if !postProcessingEnabled {
             return (trimmedRawTranscript, .postProcessingDisabled, "")
         }
@@ -1554,7 +1500,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
             let result = try await postProcessingService.postProcess(
                 transcript: trimmedRawTranscript,
                 context: context,
-                customVocabulary: customVocabulary
+                customVocabulary: customVocabulary,
+                customSystemPrompt: customSystemPrompt
             )
             return (result.transcript, .postProcessingSucceeded, result.prompt)
         } catch {
@@ -1652,7 +1599,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
                         intent: sessionIntent,
                         context: appContext,
                         postProcessingService: postProcessingService,
-                        customVocabulary: self.customVocabulary
+                        customVocabulary: self.customVocabulary,
+                        customSystemPrompt: self.customSystemPrompt
                     )
                     try Task.checkCancellation()
 

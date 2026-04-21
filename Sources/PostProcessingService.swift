@@ -175,7 +175,8 @@ Behavior:
     func postProcess(
         transcript: String,
         context: AppContext,
-        customVocabulary: String
+        customVocabulary: String,
+        customSystemPrompt: String = ""
     ) async throws -> PostProcessingResult {
         let vocabularyTerms = mergedVocabularyTerms(rawVocabulary: customVocabulary)
 
@@ -188,7 +189,8 @@ Behavior:
                 return try await self.processWithFallback(
                     transcript: transcript,
                     contextSummary: context.contextSummary,
-                    customVocabulary: vocabularyTerms
+                    customVocabulary: vocabularyTerms,
+                    customSystemPrompt: customSystemPrompt
                 )
             }
 
@@ -261,12 +263,14 @@ Behavior:
     private func processWithFallback(
         transcript: String,
         contextSummary: String,
-        customVocabulary: [String]
+        customVocabulary: [String],
+        customSystemPrompt: String
     ) async throws -> PostProcessingResult {
         return try await process(
             transcript: transcript,
             contextSummary: contextSummary,
-            customVocabulary: customVocabulary
+            customVocabulary: customVocabulary,
+            customSystemPrompt: customSystemPrompt
         )
     }
 
@@ -287,7 +291,8 @@ Behavior:
     private func process(
         transcript: String,
         contextSummary: String,
-        customVocabulary: [String]
+        customVocabulary: [String],
+        customSystemPrompt: String
     ) async throws -> PostProcessingResult {
         let model = modelId
         let normalizedVocabulary = normalizedVocabularyText(customVocabulary)
@@ -301,7 +306,8 @@ Use these spellings exactly in the output when relevant:
             ""
         }
 
-        var systemPrompt = Self.localDictationSystemPrompt
+        let trimmedCustom = customSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        var systemPrompt = trimmedCustom.isEmpty ? Self.localDictationSystemPrompt : trimmedCustom
         if !vocabularyPrompt.isEmpty {
             systemPrompt += "\n\n" + vocabularyPrompt
         }
