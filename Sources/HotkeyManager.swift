@@ -1,4 +1,7 @@
 import Cocoa
+import os
+
+private let hotkeyLog = Logger(subsystem: "com.verdana86.gemmaflow", category: "Hotkey")
 
 final class HotkeyManager {
     private var localFlagsMonitor: Any?
@@ -153,6 +156,8 @@ final class HotkeyManager {
             pressedModifiers: pressedModifierKeyCodes
         )
 
+        let wasPressed = pressedModifierKeyCodes.contains(event.keyCode)
+
         if ShortcutBinding.modifierKeyCodes.contains(event.keyCode) {
             var updatedModifierKeyCodes = pressedModifierKeyCodes
             if updatedModifierKeyCodes.contains(event.keyCode) {
@@ -161,6 +166,10 @@ final class HotkeyManager {
                 updatedModifierKeyCodes.insert(event.keyCode)
             }
             pressedModifierKeyCodes = updatedModifierKeyCodes
+            let transition = wasPressed ? "release" : "press"
+            hotkeyLog.log("flagsChanged keyCode=\(event.keyCode, privacy: .public) \(transition, privacy: .public) pressedMods=\(self.pressedModifierKeyCodes.sorted(), privacy: .public) holdActive=\(self.holdIsActive, privacy: .public) toggleActive=\(self.toggleIsActive, privacy: .public)")
+        } else {
+            hotkeyLog.log("flagsChanged non-modifier keyCode=\(event.keyCode, privacy: .public) rawFlags=\(event.modifierFlags.rawValue, privacy: .public)")
         }
 
         let shouldConsumeAfter = shouldConsumeModifierEvent(
@@ -173,6 +182,7 @@ final class HotkeyManager {
     }
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
+        hotkeyLog.log("keyDown keyCode=\(event.keyCode, privacy: .public) repeat=\(event.isARepeat, privacy: .public)")
         if event.keyCode == 53 {
             guard !event.isARepeat else { return false }
             return onEscapeKeyPressed?() ?? false
@@ -201,6 +211,7 @@ final class HotkeyManager {
     }
 
     private func handleKeyUp(_ event: NSEvent) -> Bool {
+        hotkeyLog.log("keyUp keyCode=\(event.keyCode, privacy: .public)")
         guard !ShortcutBinding.modifierKeyCodes.contains(event.keyCode) else { return false }
 
         let shouldConsumeBefore = shouldConsumeKeyEvent(
@@ -228,6 +239,8 @@ final class HotkeyManager {
 
         holdIsActive = bindingIsActive(configuration.hold)
         toggleIsActive = bindingIsActive(configuration.toggle)
+
+        hotkeyLog.log("evaluate hold=\(previousHold, privacy: .public)→\(self.holdIsActive, privacy: .public) toggle=\(previousToggle, privacy: .public)→\(self.toggleIsActive, privacy: .public) holdBinding=\(String(describing: self.configuration.hold), privacy: .public) toggleBinding=\(String(describing: self.configuration.toggle), privacy: .public)")
 
         emitChanges(
             previousHold: previousHold,
@@ -260,9 +273,11 @@ final class HotkeyManager {
         }
 
         for (event, _) in activations.sorted(by: { $0.1 > $1.1 }) {
+            hotkeyLog.log("emit activation event=\(String(describing: event), privacy: .public)")
             onShortcutEvent?(event)
         }
         for (event, _) in deactivations.sorted(by: { $0.1 < $1.1 }) {
+            hotkeyLog.log("emit deactivation event=\(String(describing: event), privacy: .public)")
             onShortcutEvent?(event)
         }
     }

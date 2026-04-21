@@ -383,9 +383,9 @@ Per ogni step, verificare su questi scenari:
 - [x] **Step 2b — WhisperKit integration** — WhisperKit 0.14.1, build system Makefile→swift build, ad-hoc codesign default
 - [x] **Step 2b.iii — Polish WhisperKit** — `WhisperKitModelChoice` (Turbo/Large/Small), `TranscriptionLanguage` picker, `WhisperKitDownloadManager` con progress bar
 - [x] **Step 3a — LLMBackend refactor** — protocol + `RemoteOpenAILLMBackend` + types, `PostProcessingService` migrato (`AppContextService` rimandato per multimodal)
-- [x] **Step 3b — Runtime MLX Swift scelto e integrato** — mlx-swift-lm branch main, macOS 13→14 bump (richiesto da MLX), 47/47 test verdi, .app 42MB
-- [ ] **Step 3c — LocalLLMBackend via MLX** ← PROSSIMO
-- [ ] Step 4 — Rimuovere cloud default + redesign onboarding
+- [x] **Step 3b — Runtime MLX Swift scelto e integrato** — mlx-swift-lm, macOS 13→14 bump, WhisperKit 0.18 + swift-transformers 1.1.9 + swift-huggingface aggiunti
+- [x] **Step 3c — LocalLLMBackend via MLX completato** — `LocalLLMBackend` con `ChatSession`, `MLXModelContainerPool` cache, `LLMBackendKind` routing, `LocalLLMModelChoice` (Gemma 4 E4B/E2B 4-bit), `LLMDownloadManager` con progress, UI preset "Use bundled Gemma" + picker + download status. 62/62 test verdi.
+- [ ] **Step 4 — Rimuovere cloud default + redesign onboarding** ← PROSSIMO
 
 ### Decisioni prese (2026-04-20)
 

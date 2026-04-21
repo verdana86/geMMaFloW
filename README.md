@@ -1,82 +1,61 @@
 <p align="center">
-  <img src="Resources/AppIcon-Source.png" width="128" height="128" alt="FreeFlow icon">
+  <img src="Resources/AppIcon-Source.png" width="128" height="128" alt="geMMaFloW icon">
 </p>
 
-<h1 align="center">FreeFlow</h1>
+<h1 align="center">geMMaFloW</h1>
 
 <p align="center">
-  Free and open source alternative to <a href="https://wisprflow.ai">Wispr Flow</a>, <a href="https://superwhisper.com">Superwhisper</a>, and <a href="https://monologue.to">Monologue</a>.
+  100% local, private dictation for macOS — <b>Whisper + Gemma 4</b>, no cloud.
 </p>
 
 <p align="center">
-  <a href="https://github.com/zachlatta/freeflow/releases/latest/download/FreeFlow.dmg"><b>⬇ Download FreeFlow.dmg</b></a><br>
-  <sub>Works on all Macs (Apple Silicon + Intel)</sub>
+  <sub>Apple Silicon · macOS 14+ · MIT licensed</sub>
 </p>
 
 ---
 
-<p align="center">
-  <img src="Resources/demo.gif" alt="FreeFlow demo" width="600">
-</p>
+## What is this?
 
-<p align="center">
-  <i>Thank you to <a href="https://github.com/marcbodea">@marcbodea</a> for maintaining FreeFlow!</i>
-</p>
+geMMaFloW is a fork of [FreeFlow](https://github.com/zachlatta/freeflow) by [Zach Latta](https://github.com/zachlatta). FreeFlow is already a great free alternative to Wispr Flow / Superwhisper / Monologue, but it sends your audio to Groq's cloud for transcription and post-processing.
 
-I like the concept of apps like [Wispr Flow](https://wisprflow.ai/), [Superwhisper](https://superwhisper.com/), and [Monologue](https://www.monologue.to/) that use AI to add accurate and easy-to-use transcription to your computer, but they all charge fees of ~$10/month when the underlying AI models are free to use or cost pennies.
+I wanted the same UX **without any network round-trip**. So I replaced the two cloud calls with on-device models:
 
-So over the weekend I vibe-coded my own free version!
+| Stage | FreeFlow upstream | **geMMaFloW** |
+|---|---|---|
+| Speech → text | Groq Whisper (cloud) | **[WhisperKit](https://github.com/argmaxinc/WhisperKit)** local |
+| Text cleanup + context | Groq gpt-oss / Llama (cloud) | **[Gemma 4 E4B](https://ai.google.dev/gemma) via [MLX Swift](https://github.com/ml-explore/mlx-swift-lm)** local |
 
-It's called FreeFlow. Here's how it works:
+Audio never leaves your Mac. LLM inference never leaves your Mac. The app downloads the models on first use (Whisper ~630 MB – 1.5 GB, Gemma 4 E4B ~3.8 GB) and runs entirely offline after that.
 
-1. Download the app from above or [click here](https://github.com/zachlatta/freeflow/releases/latest/download/FreeFlow.dmg)
-2. Get a free Groq API key from [groq.com](https://groq.com/)
-3. Hold `Fn` to talk, or tap `Command-Fn` to start and stop dictation, and have whatever you say pasted into the current text field
+## How it works
 
-You can also customize both shortcuts. If your toggle shortcut extends your hold shortcut, you can start in hold mode and press the extra modifier keys to latch into tap mode without stopping the recording.
+1. Hold `Fn` (or your custom shortcut) and talk
+2. Whisper transcribes locally on Apple Silicon's Neural Engine
+3. Gemma 4 cleans up the transcript (removes filler, fixes punctuation, preserves your intent, adapts to the app you're dictating into)
+4. Cleaned text is pasted into whatever field you were in
 
-One of the cool features is that it's context aware. If you're replying to an email, it'll read the names of the people you're replying to and make sure to spell their names correctly. Same with if you're dictating into a terminal or another app. This is the same thing as Monologue's "Deep Context" feature.
+Both models stay resident in RAM after first load — a second dictation is just a few seconds end-to-end.
 
-An added bonus is that there's no FreeFlow server, so no data is stored or retained - making it more privacy friendly than the SaaS apps. The only information that leaves your computer are the API calls to Groq's transcription and LLM API (LLM is for post-processing the transcription to adapt to context).
+## Requirements
 
-If you'd rather keep cleanup more literal and less context-aware, you can paste this simpler prompt into the custom system prompt setting:
+- **macOS 14 (Sonoma) or newer**
+- **Apple Silicon Mac** (M1 / M2 / M3 / M4 / M5). Intel Macs are not supported.
+- About 5 GB of disk space for the downloaded models
+- 16 GB of RAM recommended (8 GB works but tight when Gemma 4 E4B is loaded)
 
-<details>
-  <summary>Simple post-processing prompt</summary>
+## Status
 
-  <pre><code>You are a dictation post-processor. You receive raw speech-to-text output and return clean text ready to be typed into an application.
+This is a personal fork in active development. It builds and runs, but the onboarding and defaults are being rewritten. For now you may need to manually configure the provider in Settings → Advanced to `local://whisperkit` and `local://mlx` to get the fully local pipeline.
 
-Your job:
-- Remove filler words (um, uh, you know, like) unless they carry meaning.
-- Fix spelling, grammar, and punctuation errors.
-- When the transcript already contains a word that is a close misspelling of a name or term from the context or custom vocabulary, correct the spelling. Never insert names or terms from context that the speaker did not say.
-- Preserve the speaker's intent, tone, and meaning exactly.
+See [`docs/analysis/PLAN.md`](docs/analysis/PLAN.md) for the roadmap.
 
-Output rules:
-- Return ONLY the cleaned transcript text, nothing else. So NEVER output words like "Here is the cleaned transcript text:"
-- If the transcription is empty, return exactly: EMPTY
-- Do not add words, names, or content that are not in the transcription. The context is only for correcting spelling of words already spoken.
-- Do not change the meaning of what was said.
+## Credits
 
-Example:
-RAW_TRANSCRIPTION: "hey um so i just wanted to like follow up on the meating from yesterday i think we should definately move the dedline to next friday becuz the desine team still needs more time to finish the mock ups and um yeah let me know if that works for you ok thanks"
-
-Then your response would be ONLY the cleaned up text, so here your response is ONLY:
-"Hey, I just wanted to follow up on the meeting from yesterday. I think we should definitely move the deadline to next Friday because the design team still needs more time to finish the mockups. Let me know if that works for you. Thanks."</code></pre>
-</details>
-
-### FAQ
-
-**Why does this use Groq instead of a local transcription model?**
-
-I love this idea, and originally planned to build FreeFlow using local models, but to have post-processing (that's where you get correctly spelled names when replying to emails / etc), you need to have a local LLM too.
-
-If you do that, the total pipeline takes too long for the UX to be good (5-10 seconds per transcription instead of <1s). I also had concerns around battery life.
-
-Some day!
-
-**Update:** You can now use a custom model with FreeFlow by configuring the LLM API URL in the FreeFlow settings to use Ollama. Thank you @taciturnaxolotl!
+- Upstream [FreeFlow](https://github.com/zachlatta/freeflow) by Zach Latta — the UX, the dictation pipeline scaffolding, and all the clever bits around context-aware post-processing
+- [WhisperKit](https://github.com/argmaxinc/WhisperKit) by Argmax for the on-device speech recognition
+- [MLX Swift](https://github.com/ml-explore/mlx-swift) by Apple and [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) for native Swift LLM inference
+- [Gemma 4](https://ai.google.dev/gemma) by Google DeepMind
 
 ## License
 
-Licensed under the MIT license.
+MIT — same as the FreeFlow upstream. See [LICENSE](LICENSE) (Copyright © 2026 Zach Latta, preserved as required).

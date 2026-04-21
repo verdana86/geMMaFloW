@@ -4,64 +4,18 @@ import Combine
 import Foundation
 import ServiceManagement
 
-private struct SetupProviderSettingsSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @Binding var apiBaseURLInput: String
-
-    var body: some View {
-        VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Advanced Provider Settings")
-                    .font(.title2.weight(.semibold))
-                Text("Use these fields when pointing FreeFlow at another OpenAI-compatible provider or when you need custom model IDs.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(20)
-
-            Divider()
-
-            ScrollView {
-                ProviderSettingsFields(
-                    apiBaseURLInput: $apiBaseURLInput,
-                    showsModelDescription: true
-                )
-                .padding(20)
-            }
-
-            Divider()
-
-            HStack {
-                Spacer()
-                Button("Done") {
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
-            }
-            .padding(16)
-        }
-        .frame(width: 560, height: 520)
-    }
-}
-
 struct SetupView: View {
     var onComplete: () -> Void
     @EnvironmentObject var appState: AppState
     @Environment(\.openURL) private var openURL
-    private let freeflowRepoURL = URL(string: "https://github.com/zachlatta/freeflow")!
+    private let freeflowRepoURL = URL(string: "https://github.com/verdana86/geMMaFloW")!
     private enum SetupStep: Int, CaseIterable {
         case welcome = 0
-        case apiKey
         case micPermission
         case accessibility
         case screenRecording
         case holdShortcut
         case toggleShortcut
-        case commandMode
-        case vocabulary
-        case launchAtLogin
         case testTranscription
         case ready
     }
@@ -69,14 +23,8 @@ struct SetupView: View {
     @State private var currentStep = SetupStep.welcome
     @State private var micPermissionGranted = false
     @State private var accessibilityGranted = false
-    @State private var apiKeyInput: String = ""
-    @State private var apiBaseURLInput: String = ""
-    @State private var isValidatingKey = false
-    @State private var keyValidationError: String?
-    @State private var showingProviderSettingsSheet = false
     @State private var accessibilityTimer: Timer?
     @State private var screenRecordingTimer: Timer?
-    @State private var customVocabularyInput: String = ""
     @StateObject private var githubCache = GitHubMetadataCache.shared
 
     // Test transcription state
@@ -117,12 +65,10 @@ struct SetupView: View {
                     Group {
                         if currentStep != .welcome {
                             Button("Back") {
-                                keyValidationError = nil
                                 withAnimation {
                                     currentStep = previousStep(currentStep)
                                 }
                             }
-                            .disabled(isValidatingKey)
                         }
                     }
 
@@ -130,18 +76,7 @@ struct SetupView: View {
 
                     Group {
                         if currentStep != .ready {
-                            if currentStep == .apiKey {
-                                Button(isValidatingKey ? "Validating..." : "Continue") {
-                                    validateAndContinue()
-                                }
-                                .keyboardShortcut(.defaultAction)
-                                .disabled(apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isValidatingKey)
-                            } else if currentStep == .vocabulary {
-                                Button("Continue") {
-                                    saveCustomVocabularyAndContinue()
-                                }
-                                .keyboardShortcut(.defaultAction)
-                            } else if currentStep == .testTranscription {
+                            if currentStep == .testTranscription {
                                 HStack(spacing: 10) {
                                     Button("Skip") {
                                         stopTestHotkeyMonitoring()
@@ -184,9 +119,6 @@ struct SetupView: View {
         }
         .frame(width: 520, height: 680)
         .onAppear {
-            apiKeyInput = appState.apiKey
-            apiBaseURLInput = appState.apiBaseURL
-            customVocabularyInput = appState.customVocabulary
             checkMicPermission()
             checkAccessibility()
             Task {
@@ -197,10 +129,6 @@ struct SetupView: View {
             accessibilityTimer?.invalidate()
             screenRecordingTimer?.invalidate()
             appState.resumeHotkeyMonitoringAfterShortcutCapture()
-        }
-        .sheet(isPresented: $showingProviderSettingsSheet) {
-            SetupProviderSettingsSheet(apiBaseURLInput: $apiBaseURLInput)
-                .environmentObject(appState)
         }
         .onChange(of: isCapturingShortcut) { isCapturing in
             if isCapturing {
@@ -216,8 +144,6 @@ struct SetupView: View {
         switch currentStep {
         case .welcome:
             welcomeStep
-        case .apiKey:
-            apiKeyStep
         case .micPermission:
             micPermissionStep
         case .accessibility:
@@ -228,12 +154,6 @@ struct SetupView: View {
             holdShortcutStep
         case .toggleShortcut:
             toggleShortcutStep
-        case .commandMode:
-            commandModeStep
-        case .vocabulary:
-            vocabularyStep
-        case .launchAtLogin:
-            launchAtLoginStep
         case .testTranscription:
             testTranscriptionStep
         case .ready:
@@ -251,7 +171,7 @@ struct SetupView: View {
                 .frame(width: 128, height: 128)
 
             VStack(spacing: 6) {
-                Text("Welcome to FreeFlow")
+                Text("Welcome to geMMaFloW")
                     .font(.system(size: 30, weight: .bold, design: .rounded))
 
                 Text("Dictate text anywhere on your Mac.\nHold to talk or tap to toggle dictation.")
@@ -262,7 +182,7 @@ struct SetupView: View {
 
             VStack(spacing: 10) {
                 HStack(spacing: 8) {
-                    AsyncImage(url: URL(string: "https://avatars.githubusercontent.com/u/992248")) { phase in
+                    AsyncImage(url: URL(string: "https://github.com/verdana86.png")) { phase in
                         switch phase {
                         case .success(let image):
                             image.resizable().aspectRatio(contentMode: .fill)
@@ -276,7 +196,7 @@ struct SetupView: View {
                     Button {
                         openURL(freeflowRepoURL)
                     } label: {
-                        Text("zachlatta/freeflow")
+                        Text("verdana86/geMMaFloW")
                             .font(.system(.caption, design: .monospaced).weight(.medium))
                     }
                     .buttonStyle(.plain)
@@ -361,99 +281,6 @@ struct SetupView: View {
         }
     }
 
-    var apiKeyStep: some View {
-        VStack {
-            Spacer(minLength: 0)
-
-            VStack(spacing: 20) {
-                Image(systemName: "key.fill")
-                    .font(.system(size: 60))
-                    .foregroundStyle(.blue)
-
-                Text("API Key")
-                    .font(.title)
-                    .fontWeight(.bold)
-
-                Text("Enter an API key for your OpenAI-compatible provider. If you are not using Groq, expand the advanced provider settings and enter that provider's base URL and model IDs before continuing.")
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                VStack(alignment: .leading, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Using Groq?")
-                            .font(.subheadline.weight(.semibold))
-                        VStack(alignment: .leading, spacing: 2) {
-                            instructionRow(number: "1", text: "Go to [console.groq.com/keys](https://console.groq.com/keys)")
-                            instructionRow(number: "2", text: "Create a free account (if you don't have one)")
-                            instructionRow(number: "3", text: "Click **Create API Key** and copy it")
-                        }
-                    }
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.blue.opacity(0.06))
-                    )
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("API Key")
-                            .font(.headline)
-                        SecureField("Paste your API key", text: $apiKeyInput)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(.body, design: .monospaced))
-                            .disabled(isValidatingKey)
-                            .onChange(of: apiKeyInput) { _ in
-                                keyValidationError = nil
-                            }
-
-                        if let error = keyValidationError {
-                            Label(error, systemImage: "xmark.circle.fill")
-                                .foregroundStyle(.red)
-                                .font(.caption)
-                        }
-                    }
-
-                    Button {
-                        showingProviderSettingsSheet = true
-                    } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: "slider.horizontal.3")
-                                .foregroundStyle(.secondary)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Advanced Provider Settings")
-                                    .foregroundStyle(.primary)
-                                Text("Base URL and model IDs")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: "arrow.up.right.square")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.55))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.top, 8)
-                }
-            }
-            .frame(maxWidth: 440)
-
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
     var micPermissionStep: some View {
         VStack(spacing: 20) {
             Image(systemName: "mic.fill")
@@ -464,7 +291,7 @@ struct SetupView: View {
                 .font(.title)
                 .fontWeight(.bold)
 
-            Text("FreeFlow needs access to your microphone to record audio for transcription.")
+            Text("geMMaFloW needs access to your microphone to record audio for transcription.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -503,7 +330,7 @@ struct SetupView: View {
                 .font(.title)
                 .fontWeight(.bold)
 
-            Text("FreeFlow needs Accessibility access to paste transcribed text into your apps.")
+            Text("geMMaFloW needs Accessibility access to paste transcribed text into your apps.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -555,12 +382,12 @@ struct SetupView: View {
                 .font(.title)
                 .fontWeight(.bold)
 
-            Text("FreeFlow intelligently adapts the transcription to the current app you're working in (ex. spelling names in an email correctly).")
+            Text("geMMaFloW intelligently adapts the transcription to the current app you're working in (ex. spelling names in an email correctly).")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text("It needs this permission to see which app you're working in and any in-progress work. Nothing is stored on FreeFlow's servers (FreeFlow doesn't have servers).")
+            Text("It needs this permission to see which app you're working in and any in-progress work. Nothing is stored on geMMaFloW's servers (geMMaFloW doesn't have servers).")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .font(.callout)
@@ -642,7 +469,7 @@ struct SetupView: View {
                 .font(.title)
                 .fontWeight(.bold)
 
-            Text("Choose the shortcut you want to tap once to start dictating and tap again to stop.\nIf this shortcut becomes active while you are holding the hold shortcut, FreeFlow latches into tap mode. You can also disable tap-to-toggle entirely.")
+            Text("Choose the shortcut you want to tap once to start dictating and tap again to stop.\nIf this shortcut becomes active while you are holding the hold shortcut, geMMaFloW latches into tap mode. You can also disable tap-to-toggle entirely.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -664,148 +491,6 @@ struct SetupView: View {
                     .foregroundStyle(.orange)
                     .multilineTextAlignment(.center)
             }
-
-        }
-    }
-
-    var vocabularyStep: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "text.book.closed.fill")
-                .font(.system(size: 60))
-                .foregroundStyle(.blue)
-
-            Text("Custom Vocabulary")
-                .font(.title)
-                .fontWeight(.bold)
-
-            Text("Add words and phrases that should be preserved in post-processing.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Vocabulary")
-                    .font(.headline)
-
-                TextEditor(text: $customVocabularyInput)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(minHeight: 130)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-                    )
-
-                Text("Separate entries with commas, new lines, or semicolons.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-        }
-    }
-
-    var commandModeStep: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "pencil")
-                .font(.system(size: 60))
-                .foregroundStyle(.blue)
-
-            Text("Edit Mode")
-                .font(.title)
-                .fontWeight(.bold)
-
-            Text("Transform selected text with a spoken instruction instead of dictating over it.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            VStack(alignment: .leading, spacing: 14) {
-                Toggle("Enable Edit Mode", isOn: Binding(
-                    get: { appState.isCommandModeEnabled },
-                    set: { newValue in
-                        _ = appState.setCommandModeEnabled(newValue)
-                    }
-                ))
-
-                Picker("Invocation Style", selection: Binding(
-                    get: { appState.commandModeStyle },
-                    set: { newValue in
-                        _ = appState.setCommandModeStyle(newValue)
-                    }
-                )) {
-                    ForEach(CommandModeStyle.allCases) { style in
-                        Text(style.title).tag(style)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .disabled(!appState.isCommandModeEnabled)
-
-                Group {
-                    switch appState.commandModeStyle {
-                    case .automatic:
-                        Text("Automatic mode uses your normal dictation shortcut. If text is selected, FreeFlow transforms that selection instead of dictating new text.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    case .manual:
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Manual mode only triggers when you hold an extra modifier together with your normal dictation shortcut.")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-
-                            Picker("Extra Modifier", selection: Binding(
-                                get: { appState.commandModeManualModifier },
-                                set: { newValue in
-                                    _ = appState.setCommandModeManualModifier(newValue)
-                                }
-                            )) {
-                                ForEach(CommandModeManualModifier.allCases) { modifier in
-                                    Text(modifier.title).tag(modifier)
-                                }
-                            }
-                            .disabled(!appState.isCommandModeEnabled || appState.commandModeStyle != .manual)
-                        }
-                    }
-                }
-                .opacity(appState.isCommandModeEnabled ? 1 : 0.5)
-
-                if let validationMessage = appState.commandModeManualModifierValidationMessage {
-                    Label(validationMessage, systemImage: "xmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .cornerRadius(10)
-        }
-    }
-
-    var launchAtLoginStep: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "sunrise.fill")
-                .font(.system(size: 60))
-                .foregroundStyle(.blue)
-
-            Text("Launch at Login")
-                .font(.title)
-                .fontWeight(.bold)
-
-            Text("Start FreeFlow automatically when you log in so it's always ready.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack {
-                Image(systemName: "sunrise.fill")
-                    .frame(width: 24)
-                    .foregroundStyle(.blue)
-                Toggle("Launch FreeFlow at login", isOn: $appState.launchAtLogin)
-            }
-            .padding(12)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .cornerRadius(8)
 
         }
     }
@@ -915,7 +600,7 @@ struct SetupView: View {
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                         } else {
-                            Text("Perfect — FreeFlow is ready to go.")
+                            Text("Perfect — geMMaFloW is ready to go.")
                                 .font(.title2)
                                 .fontWeight(.semibold)
 
@@ -959,7 +644,7 @@ struct SetupView: View {
                 .font(.title)
                 .fontWeight(.bold)
 
-            Text("FreeFlow lives in your menu bar.")
+            Text("geMMaFloW lives in your menu bar.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
 
@@ -988,6 +673,8 @@ struct SetupView: View {
             }
             .padding(.top, 10)
 
+            Toggle("Launch geMMaFloW at login", isOn: $appState.launchAtLogin)
+                .padding(.top, 16)
         }
     }
 
@@ -1048,37 +735,6 @@ struct SetupView: View {
     }
 
     // MARK: - Actions
-
-    func validateAndContinue() {
-        let key = apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        let baseURL = apiBaseURLInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedBaseURL = baseURL.isEmpty ? AppState.defaultAPIBaseURL : baseURL
-        appState.apiBaseURL = resolvedBaseURL
-        isValidatingKey = true
-        keyValidationError = nil
-
-        Task {
-            let valid = await TranscriptionService.validateAPIKey(key, baseURL: resolvedBaseURL)
-            await MainActor.run {
-                isValidatingKey = false
-                if valid {
-                    appState.apiKey = key
-                    withAnimation {
-                        currentStep = nextStep(currentStep)
-                    }
-                } else {
-                    keyValidationError = "Validation failed. Please check your API key and provider settings, then try again."
-                }
-            }
-        }
-    }
-
-    func saveCustomVocabularyAndContinue() {
-        appState.customVocabulary = customVocabularyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        withAnimation {
-            currentStep = nextStep(currentStep)
-        }
-    }
 
     private func previousStep(_ step: SetupStep) -> SetupStep {
         let previous = SetupStep(rawValue: step.rawValue - 1)
@@ -1324,7 +980,7 @@ class GitHubMetadataCache: ObservableObject {
 
     private var lastFetchDate: Date?
     private let cacheDuration: TimeInterval = 5 * 60 // 5 minutes
-    private let repoAPIURL = URL(string: "https://api.github.com/repos/zachlatta/freeflow")!
+    private let repoAPIURL = URL(string: "https://api.github.com/repos/verdana86/geMMaFloW")!
 
     private init() {}
 
@@ -1347,7 +1003,7 @@ class GitHubMetadataCache: ObservableObject {
             if count > 0 {
                 let perPage = 100
                 let lastPage = max(1, Int(ceil(Double(count) / Double(perPage))))
-                let stargazersURL = URL(string: "https://api.github.com/repos/zachlatta/freeflow/stargazers?per_page=\(perPage)&page=\(lastPage)")!
+                let stargazersURL = URL(string: "https://api.github.com/repos/verdana86/geMMaFloW/stargazers?per_page=\(perPage)&page=\(lastPage)")!
                 var request = URLRequest(url: stargazersURL)
                 request.setValue("application/vnd.github.v3.star+json", forHTTPHeaderField: "Accept")
                 let starredResult = try await URLSession.shared.data(for: request)

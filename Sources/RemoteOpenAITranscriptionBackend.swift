@@ -1,7 +1,7 @@
 import Foundation
 import os.log
 
-private let remoteBackendLog = OSLog(subsystem: "com.zachlatta.freeflow", category: "Transcription.RemoteOpenAI")
+private let remoteBackendLog = OSLog(subsystem: "com.verdana86.gemmaflow", category: "Transcription.RemoteOpenAI")
 
 /// Transcription backend that speaks to an OpenAI-compatible
 /// `/audio/transcriptions` endpoint (Groq, self-hosted Whisper, etc.).

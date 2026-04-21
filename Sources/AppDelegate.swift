@@ -1,4 +1,7 @@
 import SwiftUI
+import os
+
+private let terminateLog = Logger(subsystem: "com.verdana86.gemmaflow", category: "Terminate")
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     let appState = AppState()
@@ -16,6 +19,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self,
             selector: #selector(handleShowSettings),
             name: .showSettings,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleWillTerminate(_:)),
+            name: NSApplication.willTerminateNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleWillResignActive(_:)),
+            name: NSApplication.willResignActiveNotification,
             object: nil
         )
 
@@ -41,6 +56,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             showSettingsWindow()
         }
         return true
+    }
+
+    @objc private func handleWillTerminate(_ note: Notification) {
+        let symbols = Thread.callStackSymbols.joined(separator: "\n")
+        terminateLog.error("willTerminate — call stack:\n\(symbols, privacy: .public)")
+    }
+
+    @objc private func handleWillResignActive(_ note: Notification) {
+        terminateLog.debug("willResignActive")
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let symbols = Thread.callStackSymbols.joined(separator: "\n")
+        terminateLog.error("applicationShouldTerminate — call stack:\n\(symbols, privacy: .public)")
+        return .terminateNow
     }
 
     @objc func handleShowSetup() {
@@ -82,7 +112,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "FreeFlow"
+        window.title = "geMMaFloW"
         window.contentView = hostingView
         window.isReleasedWhenClosed = false
         window.center()
@@ -117,7 +147,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "FreeFlow"
+        window.title = "geMMaFloW"
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
         window.contentView = NSHostingView(rootView: setupView)

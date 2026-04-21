@@ -61,7 +61,9 @@ struct ProviderSettingsFields: View {
     @FocusState private var isEditingLLMAPIKey: Bool
     @State private var whisperKitChoice: WhisperKitModelChoice = .default
     @State private var transcriptionLanguage: TranscriptionLanguage = .auto
+    @State private var localLLMChoice: LocalLLMModelChoice = .default
     @ObservedObject private var whisperKitDownloads = WhisperKitDownloadManager.shared
+    @ObservedObject private var llmDownloads = LLMDownloadManager.shared
 
     let showsModelDescription: Bool
 
@@ -154,10 +156,69 @@ struct ProviderSettingsFields: View {
         commitTranscriptionBaseURL()
     }
 
+    private func applyBundledGemmaLLMPreset() {
+        localLLMChoice = .default
+        llmBaseURLDraft = LocalLLMModelChoice.default.sentinelBaseURL
+        llmAPIKeyDraft = ""
+        commitLLMBaseURL()
+        commitLLMAPIKey()
+    }
+
+    private var isUsingLocalLLM: Bool {
+        LocalLLMModelChoice.fromSentinelBaseURL(llmBaseURLDraft) != nil
+            || llmBaseURLDraft.hasPrefix("local://mlx")
+    }
+
+    private func applyLocalLLMModelChoice(_ choice: LocalLLMModelChoice) {
+        localLLMChoice = choice
+        llmBaseURLDraft = choice.sentinelBaseURL
+        commitLLMBaseURL()
+    }
+
     private func applyTranscriptionLanguage(_ language: TranscriptionLanguage) {
         transcriptionLanguage = language
         guard appState.transcriptionLanguage != language.isoCode else { return }
         appState.transcriptionLanguage = language.isoCode
+    }
+
+    @ViewBuilder
+    private func localLLMDownloadStatusView(for modelId: String) -> some View {
+        let isActive = llmDownloads.isDownloading && llmDownloads.currentModelId == modelId
+        let isReady = llmDownloads.isReady(modelId: modelId)
+
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Model status:")
+                    .font(.caption)
+                Spacer()
+                if isActive {
+                    Text("\(Int(llmDownloads.progressFraction * 100))%")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                } else if isReady {
+                    Label("Loaded", systemImage: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                        .labelStyle(.titleAndIcon)
+                } else {
+                    Button("Download & load now") {
+                        Task.detached(priority: .userInitiated) {
+                            _ = try? await MLXModelContainerPool.shared.loadOrReturn(modelId: modelId)
+                        }
+                    }
+                    .font(.caption)
+                }
+            }
+            if isActive {
+                ProgressView(value: llmDownloads.progressFraction)
+                    .progressViewStyle(.linear)
+            }
+            if let error = llmDownloads.errorMessage, llmDownloads.currentModelId == nil {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
     }
 
     @ViewBuilder
@@ -430,13 +491,15 @@ struct ProviderSettingsFields: View {
                             Text("LLM Provider Override")
                                 .font(.caption.weight(.semibold))
                             Spacer()
+                            Button("Use bundled Gemma") { applyBundledGemmaLLMPreset() }
+                                .font(.caption)
                             Button("Use Ollama") { applyOllamaLLMPreset() }
                                 .font(.caption)
                             Button("Clear") { clearLLMOverride() }
                                 .font(.caption)
                                 .disabled(llmBaseURLDraft.isEmpty && llmAPIKeyDraft.isEmpty)
                         }
-                        TextField("Base URL (e.g. http://localhost:11434/v1)", text: $llmBaseURLDraft)
+                        TextField("Base URL (e.g. http://localhost:11434/v1 or local://mlx)", text: $llmBaseURLDraft)
                             .textFieldStyle(.roundedBorder)
                             .font(.system(.body, design: .monospaced))
                             .focused($isEditingLLMBaseURL)
@@ -444,13 +507,31 @@ struct ProviderSettingsFields: View {
                             .onChange(of: isEditingLLMBaseURL) { editing in
                                 if !editing { commitLLMBaseURL() }
                             }
-                        SecureField("API key (\"ollama\" for local, leave empty to reuse the default)", text: $llmAPIKeyDraft)
+                        SecureField("API key (\"ollama\" for local, empty for bundled Gemma)", text: $llmAPIKeyDraft)
                             .textFieldStyle(.roundedBorder)
                             .focused($isEditingLLMAPIKey)
                             .onSubmit { commitLLMAPIKey() }
                             .onChange(of: isEditingLLMAPIKey) { editing in
                                 if !editing { commitLLMAPIKey() }
                             }
+
+                        if isUsingLocalLLM {
+                            HStack {
+                                Text("Model:")
+                                    .font(.caption)
+                                Picker("", selection: $localLLMChoice) {
+                                    ForEach(LocalLLMModelChoice.allCases) { choice in
+                                        Text(choice.displayName).tag(choice)
+                                    }
+                                }
+                                .labelsHidden()
+                                .onChange(of: localLLMChoice) { newValue in
+                                    applyLocalLLMModelChoice(newValue)
+                                }
+                            }
+                            localLLMDownloadStatusView(for: localLLMChoice.mlxModelId)
+                        }
+
                         Text("LLM override also handles context inference.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -477,6 +558,7 @@ struct ProviderSettingsFields: View {
                 && appState.llmAPIKey.isEmpty)
             whisperKitChoice = WhisperKitModelChoice.fromSentinelBaseURL(appState.transcriptionBaseURL) ?? .default
             transcriptionLanguage = TranscriptionLanguage.fromISO(appState.transcriptionLanguage)
+            localLLMChoice = LocalLLMModelChoice.fromSentinelBaseURL(appState.llmBaseURL) ?? .default
         }
         .onChange(of: appState.transcriptionModel) { value in
             if !isEditingTranscriptionModel {
@@ -509,6 +591,9 @@ struct ProviderSettingsFields: View {
         }
         .onChange(of: appState.llmBaseURL) { value in
             if !isEditingLLMBaseURL { llmBaseURLDraft = value }
+            if let choice = LocalLLMModelChoice.fromSentinelBaseURL(value) {
+                localLLMChoice = choice
+            }
         }
         .onChange(of: appState.llmAPIKey) { value in
             if !isEditingLLMAPIKey { llmAPIKeyDraft = value }
@@ -582,7 +667,7 @@ struct GeneralSettingsView: View {
     @State private var micPermissionGranted = false
     @StateObject private var githubCache = GitHubMetadataCache.shared
     @ObservedObject private var updateManager = UpdateManager.shared
-    private let freeflowRepoURL = URL(string: "https://github.com/zachlatta/freeflow")!
+    private let freeflowRepoURL = URL(string: "https://github.com/verdana86/geMMaFloW")!
 
     var body: some View {
         ScrollView {
@@ -594,7 +679,7 @@ struct GeneralSettingsView: View {
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 64, height: 64)
 
-                    Text("FreeFlow")
+                    Text("geMMaFloW")
                         .font(.system(size: 20, weight: .bold, design: .rounded))
 
                     Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")")
@@ -604,7 +689,7 @@ struct GeneralSettingsView: View {
                     // GitHub card
                     VStack(spacing: 10) {
                         HStack(spacing: 8) {
-                            AsyncImage(url: URL(string: "https://avatars.githubusercontent.com/u/992248")) { phase in
+                            AsyncImage(url: URL(string: "https://github.com/verdana86.png")) { phase in
                                 switch phase {
                                 case .success(let image):
                                     image.resizable().aspectRatio(contentMode: .fill)
@@ -618,7 +703,7 @@ struct GeneralSettingsView: View {
                             Button {
                                 openURL(freeflowRepoURL)
                             } label: {
-                                Text("zachlatta/freeflow")
+                                Text("verdana86/geMMaFloW")
                                     .font(.system(.caption, design: .monospaced).weight(.medium))
                             }
                             .buttonStyle(.plain)
@@ -751,7 +836,7 @@ struct GeneralSettingsView: View {
 
     private var startupSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Toggle("Launch FreeFlow at login", isOn: $appState.launchAtLogin)
+            Toggle("Launch geMMaFloW at login", isOn: $appState.launchAtLogin)
             Toggle("Show menu bar icon", isOn: $showMenuBarIcon)
 
             if SMAppService.mainApp.status == .requiresApproval {
@@ -867,7 +952,7 @@ struct GeneralSettingsView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "arrow.down.circle.fill")
                                 .foregroundStyle(.blue)
-                            Text("A new version of FreeFlow is available!")
+                            Text("A new version of geMMaFloW is available!")
                                 .font(.caption.weight(.semibold))
                             Spacer()
                             Button("Update Now") {
@@ -890,7 +975,7 @@ struct GeneralSettingsView: View {
 
     private var apiKeySection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("FreeFlow uses the configured transcription model with your selected OpenAI-compatible provider.")
+            Text("geMMaFloW uses the configured transcription model with your selected OpenAI-compatible provider.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -1071,7 +1156,7 @@ struct GeneralSettingsView: View {
         VStack(alignment: .leading, spacing: 10) {
             Toggle("Preserve clipboard after paste", isOn: $appState.preserveClipboard)
 
-            Text("FreeFlow will temporarily place the transcript on your clipboard to paste it, then restore whatever was there before. If you copy something else before the restore happens, FreeFlow leaves it alone.")
+            Text("geMMaFloW will temporarily place the transcript on your clipboard to paste it, then restore whatever was there before. If you copy something else before the restore happens, geMMaFloW leaves it alone.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -1493,11 +1578,11 @@ struct PromptsSettingsView: View {
         let vocabulary = appState.customVocabulary
 
         let context = AppContext(
-            appName: "FreeFlow Settings",
-            bundleIdentifier: "com.zachlatta.freeflow",
+            appName: "geMMaFloW Settings",
+            bundleIdentifier: "com.verdana86.gemmaflow",
             windowTitle: "System Prompt Test",
             selectedText: nil,
-            currentActivity: "User is testing the system prompt in FreeFlow settings.",
+            currentActivity: "User is testing the system prompt in geMMaFloW settings.",
             contextPrompt: nil,
             screenshotDataURL: nil,
             screenshotMimeType: nil,
@@ -1535,7 +1620,7 @@ struct PromptsSettingsView: View {
             && appState.customContextPromptLastModified < AppContextService.defaultContextPromptDate
 
         return VStack(alignment: .leading, spacing: 10) {
-            Text("Controls how FreeFlow infers your current activity from app metadata and screenshots.")
+            Text("Controls how geMMaFloW infers your current activity from app metadata and screenshots.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 

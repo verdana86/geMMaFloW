@@ -6,7 +6,7 @@ import ServiceManagement
 import ApplicationServices
 import ScreenCaptureKit
 import os.log
-private let recordingLog = OSLog(subsystem: "com.zachlatta.freeflow", category: "Recording")
+private let recordingLog = OSLog(subsystem: "com.verdana86.gemmaflow", category: "Recording")
 
 struct VoiceMacro: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
@@ -468,8 +468,14 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let hasCompletedSetup = UserDefaults.standard.bool(forKey: "hasCompletedSetup")
         let apiKey = Self.loadStoredAPIKey(account: apiKeyStorageKey)
         let apiBaseURL = Self.loadStoredAPIBaseURL(account: "api_base_url")
-        let transcriptionBaseURL = Self.loadStoredOptionalEndpoint(account: transcriptionBaseURLStorageKey)
-        let llmBaseURL = Self.loadStoredOptionalEndpoint(account: llmBaseURLStorageKey)
+        let transcriptionBaseURL = Self.loadStoredOptionalEndpoint(
+            account: transcriptionBaseURLStorageKey,
+            ifEmpty: Self.defaultTranscriptionBaseURL
+        )
+        let llmBaseURL = Self.loadStoredOptionalEndpoint(
+            account: llmBaseURLStorageKey,
+            ifEmpty: Self.defaultLLMBaseURL
+        )
         let transcriptionAPIKey = Self.loadStoredOptionalEndpoint(account: transcriptionAPIKeyStorageKey)
         let llmAPIKey = Self.loadStoredOptionalEndpoint(account: llmAPIKeyStorageKey)
         let initialLLMBaseURL = Self.resolveEndpoint(specific: llmBaseURL, legacy: apiBaseURL)
@@ -633,12 +639,22 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private static func loadStoredOptionalEndpoint(account: String) -> String {
-        guard let stored = AppSettingsStorage.load(account: account) else { return "" }
-        return stored.trimmingCharacters(in: .whitespacesAndNewlines)
+    private static func loadStoredOptionalEndpoint(account: String, ifEmpty: String = "") -> String {
+        guard let stored = AppSettingsStorage.load(account: account) else { return ifEmpty }
+        let trimmed = stored.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? ifEmpty : trimmed
     }
 
-    static let defaultAPIBaseURL = "https://api.groq.com/openai/v1"
+    /// Default transcription/LLM sentinels for fresh installs. Local-only —
+    /// geMMaFloW ships without any cloud provider wiring.
+    static let defaultTranscriptionBaseURL = WhisperKitModelChoice.default.sentinelBaseURL
+    static let defaultLLMBaseURL = LocalLLMModelChoice.default.sentinelBaseURL
+
+    /// Legacy fallback URL. Kept as a named constant because some older code
+    /// paths read `apiBaseURL` when the per-service overrides are empty; on
+    /// fresh installs this mirrors the transcription sentinel so the
+    /// validation step in the onboarding passes without a cloud key.
+    static let defaultAPIBaseURL = defaultTranscriptionBaseURL
 
     /// Resolves an endpoint value by falling back to a legacy source when the
     /// specific value is empty or whitespace-only. Used by Step 1 split to keep
@@ -721,7 +737,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
     static func audioStorageDirectory() -> URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "FreeFlow"
+        let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "geMMaFloW"
         let audioDir = appSupport.appendingPathComponent("\(appName)/audio", isDirectory: true)
         if !FileManager.default.fileExists(atPath: audioDir.path) {
             try? FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)
@@ -1603,7 +1619,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     func showMicrophonePermissionAlert() {
         let alert = NSAlert()
         alert.messageText = "Microphone Permission Required"
-        alert.informativeText = "FreeFlow cannot record audio without Microphone access.\n\nGo to System Settings > Privacy & Security > Microphone and enable FreeFlow."
+        alert.informativeText = "geMMaFloW cannot record audio without Microphone access.\n\nGo to System Settings > Privacy & Security > Microphone and enable geMMaFloW."
         alert.alertStyle = .critical
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Dismiss")
@@ -1621,7 +1637,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     func showAccessibilityAlert() {
         let alert = NSAlert()
         alert.messageText = "Accessibility Permission Required"
-        alert.informativeText = "FreeFlow cannot type transcriptions without Accessibility access.\n\nGo to System Settings > Privacy & Security > Accessibility and enable FreeFlow."
+        alert.informativeText = "geMMaFloW cannot type transcriptions without Accessibility access.\n\nGo to System Settings > Privacy & Security > Accessibility and enable geMMaFloW."
         alert.alertStyle = .critical
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Dismiss")
@@ -2111,7 +2127,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private func showScreenshotPermissionAlert(message: String) {
         let alert = NSAlert()
         alert.messageText = "Screen Recording Permission Required"
-        alert.informativeText = "\(message)\n\nFreeFlow requires Screen Recording permission to capture screenshots for context-aware transcription.\n\nGo to System Settings > Privacy & Security > Screen Recording and enable FreeFlow."
+        alert.informativeText = "\(message)\n\ngeMMaFloW requires Screen Recording permission to capture screenshots for context-aware transcription.\n\nGo to System Settings > Privacy & Security > Screen Recording and enable geMMaFloW."
         alert.alertStyle = .critical
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Dismiss")

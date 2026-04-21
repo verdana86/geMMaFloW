@@ -14,9 +14,10 @@ enum WhisperKitModelChoice: String, CaseIterable, Identifiable {
     case small
 
     /// Default when the user opts into WhisperKit without picking a preset.
-    /// Large matches what WhisperKit would auto-select on M2+ — no surprise
-    /// for users who already downloaded it, and maximum quality out of the
-    /// box. Users who want faster cold starts switch to Turbo manually.
+    /// Large matches what WhisperKit would auto-select on M2+ — stable across
+    /// model loads. Turbo is faster but hangs on load under some conditions
+    /// (needs investigation). Users who want faster cold starts switch to
+    /// Turbo manually from Settings.
     static let `default`: WhisperKitModelChoice = .large
 
     var id: String { rawValue }

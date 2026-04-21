@@ -1,8 +1,8 @@
-APP_NAME ?= FreeFlow Dev
-BUNDLE_ID ?= com.zachlatta.freeflow.dev
+APP_NAME ?= geMMaFloW
+BUNDLE_ID ?= com.verdana86.gemmaflow
 BUILD_DIR = build
 APP_BUNDLE = $(BUILD_DIR)/$(APP_NAME).app
-CODESIGN_IDENTITY ?= -
+CODESIGN_IDENTITY ?= geMMaFloW Dev Signer
 CONTENTS = $(APP_BUNDLE)/Contents
 MACOS_DIR = $(CONTENTS)/MacOS
 empty :=
@@ -18,14 +18,36 @@ RESOURCES = $(CONTENTS)/Resources
 ICON_SOURCE = Resources/AppIcon-Source.png
 ICON_ICNS = Resources/AppIcon.icns
 
-.PHONY: all clean run icon dmg codesign-dmg notarize test
+# MLX requires a precompiled Metal shader library (default.metallib).
+# SwiftPM does not compile .metal files, so we delegate to Xcode's build
+# of Cmlx.framework and extract default.metallib from its Resources.
+MLX_XCODEPROJ = .build/checkouts/mlx-swift/xcode/MLX.xcodeproj
+MLX_DERIVED_DATA = .build/mlx-xcode
+MLX_METALLIB = $(MLX_DERIVED_DATA)/Build/Products/Release/Cmlx.framework/Versions/A/Resources/default.metallib
+
+.PHONY: all clean run icon dmg codesign-dmg notarize test metallib
 
 all: $(APP_EXECUTABLE_TARGET)
 
 test:
 	swift test
 
-$(APP_EXECUTABLE_TARGET): $(SOURCES) Info.plist $(ICON_ICNS)
+# Build default.metallib via xcodebuild Cmlx scheme. Requires the Metal
+# Toolchain Xcode component (`xcodebuild -downloadComponent MetalToolchain`
+# installs it once). Skipped if metallib already exists.
+$(MLX_METALLIB):
+	@if [ ! -f "$(MLX_XCODEPROJ)/project.pbxproj" ]; then \
+		echo "MLX checkout missing — running swift package resolve first"; \
+		swift package resolve; \
+	fi
+	@echo "Building MLX default.metallib via xcodebuild..."
+	@xcodebuild build -project "$(MLX_XCODEPROJ)" -scheme Cmlx \
+		-configuration Release -derivedDataPath "$(MLX_DERIVED_DATA)" \
+		ARCHS=arm64 ONLY_ACTIVE_ARCH=YES 2>&1 | tail -3
+
+metallib: $(MLX_METALLIB)
+
+$(APP_EXECUTABLE_TARGET): $(SOURCES) Info.plist $(ICON_ICNS) $(MLX_METALLIB)
 	@mkdir -p "$(MACOS_DIR)" "$(RESOURCES)"
 	swift build -c $(SWIFT_CONFIG) --product $(SWIFT_EXECUTABLE_NAME)
 	@cp "$$(swift build -c $(SWIFT_CONFIG) --show-bin-path)/$(SWIFT_EXECUTABLE_NAME)" "$(MACOS_DIR)/$(APP_NAME)"
@@ -35,8 +57,9 @@ $(APP_EXECUTABLE_TARGET): $(SOURCES) Info.plist $(ICON_ICNS)
 	@plutil -replace CFBundleExecutable -string "$(APP_NAME)" "$(CONTENTS)/Info.plist"
 	@plutil -replace CFBundleIdentifier -string "$(BUNDLE_ID)" "$(CONTENTS)/Info.plist"
 	@cp $(ICON_ICNS) "$(RESOURCES)/"
-	@xattr -cr "$(APP_BUNDLE)"
-	@codesign --force --options runtime --sign "$(CODESIGN_IDENTITY)" --entitlements FreeFlow.entitlements "$(APP_BUNDLE)"
+	@cp "$(MLX_METALLIB)" "$(MACOS_DIR)/mlx.metallib"
+	@cp "$(MLX_METALLIB)" "$(RESOURCES)/default.metallib"
+	@bash -c 'set -e; APP="$(APP_BUNDLE)"; find "$$APP" -name "._*" -delete 2>/dev/null || true; find "$$APP" -exec xattr -c {} + 2>/dev/null || true; xattr -c "$$APP" 2>/dev/null || true; sync; sleep 0.3; xattr -c "$$APP" 2>/dev/null || true; codesign --force --options runtime --deep --sign "$(CODESIGN_IDENTITY)" --entitlements FreeFlow.entitlements "$$APP"'
 	@echo "Built $(APP_BUNDLE)"
 
 icon: $(ICON_ICNS)
