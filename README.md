@@ -137,6 +137,41 @@ More detail in [docs/PRIVACY.md](docs/PRIVACY.md).
 
 ---
 
+## Performance
+
+geMMaFloW ships two Whisper variants (Small, Large-v3) and two Gemma variants (E2B, E4B) — four combinations to trade off speed and quality. The matrix below comes from a reproducible benchmark (`scripts/run-bench.sh`) on a single Apple Silicon laptop with TTS-generated audio (macOS `say`, voice Samantha). Same audio clip trimmed to 20 s / 40 s / 60 s / 81 s so you can see how each pipeline scales with length.
+
+### Total latency per pipeline (Whisper transcribe + Gemma cleanup)
+
+<p align="center">
+  <img src="docs/benchmark/latency-stacked.png" width="850" alt="Stacked latency — Whisper + Gemma for each combo">
+</p>
+
+Light bars = Whisper transcription, solid bars = Gemma post-processing. Whisper is predictable and sub-linear in audio length; Gemma dominates the wall-clock budget and scales with transcript length.
+
+### Realtime factor (latency ÷ audio duration — lower is better)
+
+<p align="center">
+  <img src="docs/benchmark/realtime-factor.png" width="850" alt="Realtime factor by combo and audio length">
+</p>
+
+Below the red line = faster than real-time. On 60 s and 81 s clips every combo hits ~0.7–1.0× realtime, so the cleaned transcript lands within about the same wall-clock time as the clip you dictated.
+
+### Pick by use case
+
+| Use case | Combo | Trade-off |
+|---|---|---|
+| **Default (best quality)** | Whisper Large + Gemma E4B | Accurate technical vocabulary + natural punctuation. ~70 s on an 81 s clip. |
+| **Fast on modest machines** | Whisper Small + Gemma E2B | Small mis-hears rare terms (e.g. `metallib` → `Metallab`, `latency` → `agency`). E2B strips commas. |
+| **Balanced** | Whisper Large + Gemma E2B | Correct transcription, aggressive cleanup (sometimes too aggressive on punctuation). |
+| **Avoid** | Whisper Small + Gemma E4B | E4B can't rescue what Small mis-heard; you pay Gemma's full cost without the quality win. |
+
+All sample transcripts per combo are in [docs/benchmark/results.md](docs/benchmark/results.md). Reproduce with `scripts/run-bench.sh` (downloads all four models first, then runs the matrix — takes ~20 min cold, ~5 min warm).
+
+**Caveats**: Gemma timings are noisy across runs. The primed KV cache (from the warmup phase) boosts the first post-warmup call, and MLX memory pressure with both E2B and E4B resident simultaneously can force swaps. For production-grade numbers you want N≥3 runs per cell with the non-target Gemma variant evicted — the current chart is representative enough to choose a combo, but don't read three-digit-millisecond differences as meaningful.
+
+---
+
 ## Requirements
 
 - **macOS 14 (Sonoma) or newer**
