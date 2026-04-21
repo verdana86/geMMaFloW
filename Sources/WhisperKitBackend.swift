@@ -49,6 +49,14 @@ actor WhisperKitInstancePool {
 
     private var cache: [String: WhisperKit] = [:]
 
+    /// Drops the cached pipeline for a variant so the next `loadOrReturn`
+    /// call rebuilds it fresh. Used when the user switches Whisper model in
+    /// Settings — the old pipeline occupies ~1-2 GB of CoreML state we want
+    /// to reclaim.
+    func evict(modelVariant: String) {
+        cache.removeValue(forKey: modelVariant)
+    }
+
     func loadOrReturn(modelVariant: String?) async throws -> WhisperKit {
         // A nil variant used to mean "let WhisperKit auto-select", which
         // bypassed our download manager and gave no progress UI. Now we

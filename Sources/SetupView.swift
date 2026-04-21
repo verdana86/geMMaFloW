@@ -14,6 +14,7 @@ struct SetupView: View {
         case languagePreference
         case permissions
         case shortcuts
+        case downloadModels
         case testTranscription
         case ready
     }
@@ -23,6 +24,12 @@ struct SetupView: View {
     @State private var accessibilityGranted = false
     @State private var permissionsTimer: Timer?
     @State private var transcriptionLanguage: TranscriptionLanguage = .auto
+    @ObservedObject private var whisperKitDownloads = WhisperKitDownloadManager.shared
+    @ObservedObject private var llmDownloads = LLMDownloadManager.shared
+    @State private var whisperDownloadStarted = false
+    @State private var llmDownloadStarted = false
+    @State private var whisperDownloadError: String?
+    @State private var llmDownloadError: String?
     @StateObject private var githubCache = GitHubMetadataCache.shared
 
     // Test transcription state
@@ -148,6 +155,8 @@ struct SetupView: View {
             permissionsStep
         case .shortcuts:
             shortcutsStep
+        case .downloadModels:
+            downloadModelsStep
         case .testTranscription:
             testTranscriptionStep
         case .ready:
@@ -445,6 +454,153 @@ struct SetupView: View {
         }
     }
 
+    var downloadModelsStep: some View {
+        let whisperVariant = WhisperKitModelChoice.default.whisperKitIdentifier
+        let llmModelId = LocalLLMModelChoice.default.mlxModelId
+        let whisperReady = whisperKitDownloads.cachedFolder(for: whisperVariant) != nil
+        let llmReady = llmDownloads.isReady(modelId: llmModelId)
+
+        return VStack(spacing: 24) {
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.system(size: 50))
+                .foregroundStyle(.blue)
+
+            Text("Download Models")
+                .font(.title)
+                .fontWeight(.bold)
+
+            Text("geMMaFloW downloads the WhisperKit and Gemma models now so the first dictation is instant. You can switch variants later in Settings.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 12) {
+                downloadRow(
+                    title: WhisperKitModelChoice.default.displayName,
+                    subtitle: "Speech-to-text",
+                    isDownloading: whisperKitDownloads.isDownloading && whisperKitDownloads.currentVariant == whisperVariant,
+                    progress: whisperKitDownloads.progressFraction,
+                    isReady: whisperReady,
+                    error: whisperDownloadError ?? whisperKitDownloads.errorMessage
+                )
+
+                downloadRow(
+                    title: LocalLLMModelChoice.default.displayName,
+                    subtitle: "Transcript cleanup",
+                    isDownloading: llmDownloads.isDownloading && llmDownloads.currentModelId == llmModelId,
+                    progress: llmDownloads.progressFraction,
+                    isReady: llmReady,
+                    error: llmDownloadError ?? llmDownloads.errorMessage
+                )
+            }
+            .frame(maxWidth: 400)
+
+            if downloadModelsReady {
+                Label("Ready — continue to the test step.", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .font(.callout)
+            } else if whisperDownloadError != nil || llmDownloadError != nil {
+                Button("Retry") { kickOffModelDownloads() }
+                    .buttonStyle(.bordered)
+            } else {
+                Text("You can leave this open — downloads continue in the background.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .onAppear {
+            kickOffModelDownloads()
+        }
+    }
+
+    private func downloadRow(
+        title: String,
+        subtitle: String,
+        isDownloading: Bool,
+        progress: Double,
+        isReady: Bool,
+        error: String?
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.headline)
+                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if isReady {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                } else if isDownloading {
+                    Text("\(Int(progress * 100))%")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                } else if error != nil {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            if isDownloading {
+                ProgressView(value: progress).progressViewStyle(.linear)
+            }
+            if let error {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .cornerRadius(8)
+    }
+
+    private var downloadModelsReady: Bool {
+        let whisperReady = whisperKitDownloads.cachedFolder(for: WhisperKitModelChoice.default.whisperKitIdentifier) != nil
+        let llmReady = llmDownloads.isReady(modelId: LocalLLMModelChoice.default.mlxModelId)
+        return whisperReady && llmReady
+    }
+
+    private func kickOffModelDownloads() {
+        whisperDownloadError = nil
+        llmDownloadError = nil
+
+        let whisperVariant = WhisperKitModelChoice.default.whisperKitIdentifier
+        if whisperKitDownloads.cachedFolder(for: whisperVariant) == nil && !whisperDownloadStarted {
+            whisperDownloadStarted = true
+            Task.detached(priority: .userInitiated) {
+                do {
+                    _ = try await WhisperKitInstancePool.shared.loadOrReturn(modelVariant: whisperVariant)
+                } catch {
+                    await MainActor.run {
+                        whisperDownloadError = error.localizedDescription
+                        whisperDownloadStarted = false
+                    }
+                }
+            }
+        }
+
+        let llmModelId = LocalLLMModelChoice.default.mlxModelId
+        if !llmDownloads.isReady(modelId: llmModelId) && !llmDownloadStarted {
+            llmDownloadStarted = true
+            Task.detached(priority: .userInitiated) {
+                do {
+                    _ = try await MLXModelContainerPool.shared.loadOrReturnWithPrimedCache(
+                        modelId: llmModelId,
+                        systemPrompt: PostProcessingService.localDictationSystemPrompt
+                    )
+                } catch {
+                    await MainActor.run {
+                        llmDownloadError = error.localizedDescription
+                        llmDownloadStarted = false
+                    }
+                }
+            }
+        }
+    }
+
     var testTranscriptionStep: some View {
         VStack(spacing: 20) {
             // Microphone picker
@@ -644,6 +800,8 @@ struct SetupView: View {
             return micPermissionGranted
                 && accessibilityGranted
                 && appState.hasScreenRecordingPermission
+        case .downloadModels:
+            return downloadModelsReady
         case .testTranscription:
             return testPhase == .done && !testTranscript.isEmpty && testError == nil
         default:

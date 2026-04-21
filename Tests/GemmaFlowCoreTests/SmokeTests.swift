@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import GemmaFlowCore
 
@@ -23,5 +24,17 @@ struct SmokeTests {
     func transcriptionInitIsArgumentless() {
         let service = TranscriptionService()
         _ = service
+    }
+
+    @Test("Post-processing flag defaults to enabled when not yet persisted")
+    func postProcessingDefaultIsOn() {
+        let suiteName = "com.verdana86.gemmaflow.tests.postproc.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        #expect(defaults.object(forKey: "post_processing_enabled") == nil)
+        let resolved = defaults.object(forKey: "post_processing_enabled") == nil
+            ? true
+            : defaults.bool(forKey: "post_processing_enabled")
+        #expect(resolved == true)
     }
 }

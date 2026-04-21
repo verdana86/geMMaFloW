@@ -5,7 +5,7 @@
 <h1 align="center">geMMaFloW</h1>
 
 <p align="center">
-  100% local, private dictation for macOS — <b>Whisper + Gemma 4</b>, no cloud.
+  100% local, 100% private voice-to-text for macOS — <b>WhisperKit + Gemma 4</b>, zero cloud.
 </p>
 
 <p align="center">
@@ -14,48 +14,169 @@
 
 ---
 
-## What is this?
+## Why this fork exists
 
-geMMaFloW is a fork of [FreeFlow](https://github.com/zachlatta/freeflow) by [Zach Latta](https://github.com/zachlatta). FreeFlow is already a great free alternative to Wispr Flow / Superwhisper / Monologue, but it sends your audio to Groq's cloud for transcription and post-processing.
+geMMaFloW is a personal fork of [FreeFlow](https://github.com/zachlatta/freeflow) by [Zach Latta](https://github.com/zachlatta).
 
-I wanted the same UX **without any network round-trip**. So I replaced the two cloud calls with on-device models:
+FreeFlow is a lovely free alternative to Wispr Flow / Superwhisper / Monologue — same UX: hold `Fn`, talk, release, cleaned text appears in the active text field. But FreeFlow sends two things to [Groq](https://groq.com/)'s cloud every time you dictate:
+
+1. **Your raw audio**, to `whisper-large-v3` for transcription
+2. **The transcript + some context about the app you're dictating into**, to `gpt-oss-20b` (or Llama 4) for cleanup
+
+Groq is fast and cheap (~$1/month under heavy use). But the audio leaves your computer, and the cleanup LLM sees whatever you just said plus hints about the window you were focused on. For a tool that sits on the global hotkey and sees *everything you dictate*, that tradeoff didn't sit right with me.
+
+So I replaced both cloud calls with on-device models:
 
 | Stage | FreeFlow upstream | **geMMaFloW** |
 |---|---|---|
-| Speech → text | Groq Whisper (cloud) | **[WhisperKit](https://github.com/argmaxinc/WhisperKit)** local |
-| Text cleanup + context | Groq gpt-oss / Llama (cloud) | **[Gemma 4 E4B](https://ai.google.dev/gemma) via [MLX Swift](https://github.com/ml-explore/mlx-swift-lm)** local |
+| Speech → text | Groq `whisper-large-v3` (cloud) | [**WhisperKit**](https://github.com/argmaxinc/WhisperKit) running on the Neural Engine |
+| Text cleanup + context | Groq `gpt-oss-20b` / Llama 4 (cloud) | [**Gemma 4 E4B**](https://ai.google.dev/gemma) via [**MLX Swift**](https://github.com/ml-explore/mlx-swift) |
+| Active-app context inference | Groq `/chat/completions` | Local Accessibility API, no LLM call |
+| API keys required | Groq key | **none** |
 
-Audio never leaves your Mac. LLM inference never leaves your Mac. The app downloads the models on first use (Whisper ~630 MB – 1.5 GB, Gemma 4 E4B ~3.8 GB) and runs entirely offline after that.
+Audio never leaves your Mac. LLM inference never leaves your Mac. After the first-run model download, the app doesn't need an internet connection at all.
+
+---
 
 ## How it works
 
-1. Hold `Fn` (or your custom shortcut) and talk
-2. Whisper transcribes locally on Apple Silicon's Neural Engine
-3. Gemma 4 cleans up the transcript (removes filler, fixes punctuation, preserves your intent, adapts to the app you're dictating into)
-4. Cleaned text is pasted into whatever field you were in
+Dictation is a three-stage local pipeline. Everything in the diagram below runs in-process on your Mac — there is no server component and no network round-trip on the hot path.
 
-Both models stay resident in RAM after first load — a second dictation is just a few seconds end-to-end.
+```mermaid
+flowchart LR
+    A[🎤 Hold Fn and talk] --> B[AudioRecorder<br/>16 kHz mono WAV]
+    B --> C{Silence<br/>detector}
+    C -- below threshold --> X[Discard]
+    C -- speech --> D[WhisperKit<br/>on Neural Engine]
+    D --> E[Raw transcript]
+    E --> F[Gemma 4 E4B<br/>via MLX]
+    G[Active app context<br/>name · window · selection] --> F
+    F --> H[Cleaned transcript]
+    H --> I[⌨️ Paste at cursor]
+
+    style D fill:#e0f7fa,stroke:#00838f,color:#000
+    style F fill:#f3e5f5,stroke:#6a1b9a,color:#000
+    style G fill:#fff9c4,stroke:#827717,color:#000
+```
+
+### Stage 1 — Capture
+
+The hotkey manager ([HotkeyManager.swift](Sources/HotkeyManager.swift)) listens globally for the configured shortcut (default `Fn`, rebindable). While it's held down, [AudioRecorder.swift](Sources/AudioRecorder.swift) captures microphone audio via `AVAudioEngine`, with live level normalization so the input never clips or whispers.
+
+On release, the recording is normalized to 16 kHz mono Int16 WAV ([AudioNormalization.swift](Sources/AudioNormalization.swift)) — the format WhisperKit expects — and passed through a silence detector ([AudioSilenceDetector.swift](Sources/AudioSilenceDetector.swift)) that drops near-empty clips to avoid the classic Whisper hallucinations ("Thank you.", "[Music]", etc.).
+
+### Stage 2 — Transcribe (local)
+
+[TranscriptionService.swift](Sources/TranscriptionService.swift) hands the WAV to [WhisperKitBackend.swift](Sources/WhisperKitBackend.swift). WhisperKit runs Apple's Core ML port of Whisper directly on the Neural Engine. The first call loads the model (~1–3 s depending on variant); subsequent calls reuse a warm instance cached in memory, so a dictation is typically 1–2 s of transcription for a 10 s clip on an M-series chip.
+
+Three model variants are curated in [WhisperKitModelChoice.swift](Sources/WhisperKitModelChoice.swift):
+
+| Variant | Size | Use when |
+|---|---|---|
+| Turbo (`large-v3-turbo`) | ~630 MB | You want the fastest full-quality transcription |
+| Large v3 (default) | ~1.5 GB | Best accuracy, especially for non-English |
+| Small | ~220 MB | Tight on disk or RAM |
+
+### Stage 3 — Clean up (local)
+
+The raw Whisper output has filler words, no punctuation, and sometimes misspellings of domain terms. [PostProcessingService.swift](Sources/PostProcessingService.swift) feeds it to [LocalLLMBackend.swift](Sources/LocalLLMBackend.swift), which runs Gemma 4 4-bit via [MLX Swift](https://github.com/ml-explore/mlx-swift). The system prompt (in `PostProcessingService.swift`) instructs the model to:
+
+- Preserve the user's intent and words — don't paraphrase
+- Apply self-corrections the user spoke ("no, sorry, I meant *Thursday*")
+- Add punctuation and capitalization
+- Respect a user-defined custom vocabulary (technical terms, names, acronyms)
+- Adapt formatting to the app you're dictating into (email vs. code vs. chat)
+
+Two Gemma presets ship, both 4-bit quantized:
+
+| Variant | Size | Use when |
+|---|---|---|
+| Gemma 4 E4B (default) | ~3.8 GB | You want the best cleanup quality |
+| Gemma 4 E2B | ~1.7 GB | Lighter RAM footprint, faster on 8 GB Macs |
+
+### App-context awareness (still local)
+
+[AppContextService.swift](Sources/AppContextService.swift) collects a small context packet about the frontmost app — its name, the window title, any text you had selected — through the macOS Accessibility API. In upstream FreeFlow this context was sent to the cloud LLM for summarization. Here it's just concatenated into the Gemma prompt locally. No screenshot, no OCR, no network call.
+
+### Paste
+
+Finally [AppState.swift](Sources/AppState.swift) preserves the current clipboard, pastes the cleaned transcript at the cursor via `NSPasteboard` + `AXUIElement`, and restores what you had in the clipboard before. You end up with text in the field you were focused on and an unchanged clipboard.
+
+---
+
+## Privacy model
+
+This is the part I care about most, so here's the explicit claim with the evidence:
+
+> **No audio, no transcript, and no contextual metadata ever leaves your Mac as part of normal dictation.**
+
+How that's enforced in the code:
+
+- The cloud transcription backend and the cloud LLM backend classes have been **removed**, not just disabled. The only `TranscriptionBackend` that gets instantiated is `WhisperKitBackend`; the only `LLMBackend` is `LocalLLMBackend`.
+- `AppContextService` no longer calls any LLM — the constructor explicitly comments "Local-only: LLM-based context inference is disabled" and the HTTP path is dead code awaiting removal.
+- The app ships with **no network entitlements**. Check [GemmaFlow.entitlements](GemmaFlow.entitlements): it grants microphone + unsigned executable memory (required by MLX / WhisperKit JIT), and nothing for network or local-network access. The App Sandbox therefore refuses outbound connections.
+- No API keys, accounts, or sign-in anywhere in the app.
+
+The **one** thing that does touch the network, one time: WhisperKit and MLX fetch their models from Hugging Face on first launch. After that first download you can airplane-mode the Mac forever and dictation keeps working. Model caches live under `~/.cache/huggingface/hub/` and can be wiped from Settings.
+
+More detail in [docs/PRIVACY.md](docs/PRIVACY.md).
+
+---
 
 ## Requirements
 
 - **macOS 14 (Sonoma) or newer**
-- **Apple Silicon Mac** (M1 / M2 / M3 / M4 / M5). Intel Macs are not supported.
-- About 5 GB of disk space for the downloaded models
-- 16 GB of RAM recommended (8 GB works but tight when Gemma 4 E4B is loaded)
+- **Apple Silicon** (M1 / M2 / M3 / M4 / M5). Intel Macs are not supported and won't be — MLX + WhisperKit both target the ANE / Metal on Apple Silicon.
+- **~5 GB** of disk for the default model pair (Whisper Large v3 + Gemma 4 E4B)
+- **16 GB** of RAM recommended. 8 GB works with the Small + E2B pair but is tight with both defaults loaded.
+
+---
+
+## Build from source
+
+```bash
+git clone https://github.com/verdana86/geMMaFloW.git
+cd geMMaFloW
+make          # builds, codesigns, and produces GemmaFlow.app
+make run      # or just open build/GemmaFlow.app
+```
+
+The `Makefile` handles a quirk of MLX + SwiftPM: SPM doesn't compile `.metal` shaders, so the build shells out to `xcodebuild` to produce `default.metallib` and copies it into the app bundle. It also codesigns with a stable self-signed identity (`geMMaFloW Dev Signer`) so that Accessibility / Microphone TCC prompts persist across rebuilds.
+
+First launch opens a setup wizard that walks you through permissions (Microphone, Accessibility, Screen Recording), hotkey binding, and the initial Whisper + Gemma model downloads. After that the app lives in the menu bar.
+
+---
+
+## Documentation
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — module-by-module breakdown of the codebase
+- [docs/PRIVACY.md](docs/PRIVACY.md) — detailed privacy model with the code citations
+- [docs/analysis/PLAN.md](docs/analysis/PLAN.md) — working plan / roadmap (mostly in Italian)
+- [docs/clean-install-test.md](docs/clean-install-test.md) — clean-machine install checklist
+
+---
 
 ## Status
 
-This is a personal fork in active development. It builds and runs, but the onboarding and defaults are being rewritten. For now you may need to manually configure the provider in Settings → Advanced to `local://whisperkit` and `local://mlx` to get the fully local pipeline.
+Active personal fork. The pipeline works end-to-end: hotkey → WhisperKit → Gemma 4 → paste, fully offline. What's still rough:
 
-See [`docs/analysis/PLAN.md`](docs/analysis/PLAN.md) for the roadmap.
+- The setup wizard still has some leftover phrasing from the cloud-era onboarding; a rewrite is queued
+- The rebrand from "FreeFlow" → "GemmaFlow" is not fully propagated in UI strings yet
+- No notarized release build — build from source for now
+
+See [docs/analysis/PLAN.md](docs/analysis/PLAN.md) for what's next.
+
+---
 
 ## Credits
 
-- Upstream [FreeFlow](https://github.com/zachlatta/freeflow) by Zach Latta — the UX, the dictation pipeline scaffolding, and all the clever bits around context-aware post-processing
-- [WhisperKit](https://github.com/argmaxinc/WhisperKit) by Argmax for the on-device speech recognition
-- [MLX Swift](https://github.com/ml-explore/mlx-swift) by Apple and [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) for native Swift LLM inference
-- [Gemma 4](https://ai.google.dev/gemma) by Google DeepMind
+- [**FreeFlow**](https://github.com/zachlatta/freeflow) by Zach Latta — the UX, the dictation scaffolding, the clever context-aware prompting. This fork is a remix, not a rewrite.
+- [**WhisperKit**](https://github.com/argmaxinc/WhisperKit) by Argmax — on-device speech recognition on the Neural Engine.
+- [**MLX Swift**](https://github.com/ml-explore/mlx-swift) by Apple and [**mlx-swift-examples**](https://github.com/ml-explore/mlx-swift-examples) — native LLM inference on Apple Silicon.
+- [**Gemma**](https://ai.google.dev/gemma) by Google DeepMind — the cleanup model.
+
+---
 
 ## License
 
-MIT — same as the FreeFlow upstream. See [LICENSE](LICENSE) (Copyright © 2026 Zach Latta, preserved as required).
+MIT — same as the FreeFlow upstream. See [LICENSE](LICENSE) (Copyright © 2026 Zach Latta, preserved as required by the upstream license).

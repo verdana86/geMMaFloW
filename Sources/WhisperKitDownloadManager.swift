@@ -71,4 +71,13 @@ final class WhisperKitDownloadManager: ObservableObject {
     func cachedFolder(for variant: String) -> URL? {
         downloadedFolders[variant]
     }
+
+    /// Drop the in-process "already downloaded" flag for a variant. After
+    /// calling this, `ensureModel(variant:)` will re-probe the disk cache
+    /// instead of short-circuiting on `downloadedFolders`. Used after we
+    /// physically delete the variant from disk when the user switches
+    /// Whisper model in Settings.
+    func evict(variant: String) {
+        downloadedFolders.removeValue(forKey: variant)
+    }
 }

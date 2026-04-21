@@ -189,6 +189,10 @@ struct GeneralSettingsView: View {
     @State private var whisperKitChoice: WhisperKitModelChoice = .default
     @State private var localLLMChoice: LocalLLMModelChoice = .default
     @State private var transcriptionLanguage: TranscriptionLanguage = .auto
+    @State private var pendingWhisperSwitch: WhisperKitModelChoice?
+    @State private var pendingLLMSwitch: LocalLLMModelChoice?
+    @State private var currentWhisperOnScreen: WhisperKitModelChoice = .default
+    @State private var currentLLMOnScreen: LocalLLMModelChoice = .default
     @ObservedObject private var whisperKitDownloads = WhisperKitDownloadManager.shared
     @ObservedObject private var llmDownloads = LLMDownloadManager.shared
     @StateObject private var githubCache = GitHubMetadataCache.shared
@@ -333,17 +337,16 @@ struct GeneralSettingsView: View {
                 SettingsCard("Edit Mode", icon: "pencil") {
                     commandModeSection
                 }
-                SettingsCard("Clipboard", icon: "doc.on.clipboard") {
-                    clipboardSection
-                }
                 SettingsCard("Microphone", icon: "mic.fill") {
                     microphoneSection
                 }
-                SettingsCard("Sound Volume", icon: "speaker.wave.2.fill") {
-                    soundVolumeSection
+                SettingsCard("Alert Sounds", icon: "speaker.wave.2.fill") {
+                    alertSoundsSection
                 }
-                SettingsCard("Custom Vocabulary", icon: "text.book.closed.fill") {
-                    vocabularySection
+                if appState.postProcessingEnabled {
+                    SettingsCard("Custom Vocabulary", icon: "text.book.closed.fill") {
+                        vocabularySection
+                    }
                 }
                 SettingsCard("Permissions", icon: "lock.shield.fill") {
                     permissionsSection
@@ -353,8 +356,12 @@ struct GeneralSettingsView: View {
         }
         .onAppear {
             customVocabularyInput = appState.customVocabulary
-            whisperKitChoice = WhisperKitModelChoice.fromSentinelBaseURL(appState.transcriptionBaseURL) ?? .default
-            localLLMChoice = LocalLLMModelChoice.fromSentinelBaseURL(appState.llmBaseURL) ?? .default
+            let initialWhisper = WhisperKitModelChoice.fromSentinelBaseURL(appState.transcriptionBaseURL) ?? .default
+            let initialLLM = LocalLLMModelChoice.fromSentinelBaseURL(appState.llmBaseURL) ?? .default
+            whisperKitChoice = initialWhisper
+            localLLMChoice = initialLLM
+            currentWhisperOnScreen = initialWhisper
+            currentLLMOnScreen = initialLLM
             transcriptionLanguage = TranscriptionLanguage.fromISO(appState.transcriptionLanguage)
             checkMicPermission()
             appState.refreshLaunchAtLoginStatus()
@@ -363,11 +370,126 @@ struct GeneralSettingsView: View {
         .onChange(of: appState.transcriptionBaseURL) { value in
             if let choice = WhisperKitModelChoice.fromSentinelBaseURL(value) {
                 whisperKitChoice = choice
+                currentWhisperOnScreen = choice
             }
         }
         .onChange(of: appState.llmBaseURL) { value in
             if let choice = LocalLLMModelChoice.fromSentinelBaseURL(value) {
                 localLLMChoice = choice
+                currentLLMOnScreen = choice
+            }
+        }
+        .alert(
+            pendingWhisperSwitch.map { "Switch transcription model to \($0.displayName)?" } ?? "",
+            isPresented: Binding(
+                get: { pendingWhisperSwitch != nil },
+                set: { if !$0 { cancelWhisperSwitch() } }
+            ),
+            presenting: pendingWhisperSwitch
+        ) { newChoice in
+            Button("Download & switch") { confirmWhisperSwitch(to: newChoice) }
+            Button("Cancel", role: .cancel) { cancelWhisperSwitch() }
+        } message: { newChoice in
+            Text(whisperSwitchMessage(to: newChoice))
+        }
+        .alert(
+            pendingLLMSwitch.map { "Switch post-processing model to \($0.displayName)?" } ?? "",
+            isPresented: Binding(
+                get: { pendingLLMSwitch != nil },
+                set: { if !$0 { cancelLLMSwitch() } }
+            ),
+            presenting: pendingLLMSwitch
+        ) { newChoice in
+            Button("Download & switch") { confirmLLMSwitch(to: newChoice) }
+            Button("Cancel", role: .cancel) { cancelLLMSwitch() }
+        } message: { newChoice in
+            Text(llmSwitchMessage(to: newChoice))
+        }
+    }
+
+    // MARK: Model switch helpers
+
+    private static let megabyte: Double = 1024 * 1024
+
+    private func whisperSwitchMessage(to newChoice: WhisperKitModelChoice) -> String {
+        let oldBytes = ModelCacheCleaner.whisperKitVariantSizeBytes(variant: currentWhisperOnScreen.whisperKitIdentifier)
+        let existingBytes = ModelCacheCleaner.whisperKitVariantSizeBytes(variant: newChoice.whisperKitIdentifier)
+        var lines: [String] = []
+        if existingBytes > 0 {
+            lines.append("\(newChoice.displayName) is already on disk — no download needed.")
+        } else {
+            lines.append("Will download \(newChoice.displayName) now.")
+        }
+        if oldBytes > 0 {
+            let freed = String(format: "%.0f MB", Double(oldBytes) / Self.megabyte)
+            lines.append("The current model (\(currentWhisperOnScreen.displayName)) will be removed from disk — frees about \(freed).")
+        }
+        return lines.joined(separator: "\n\n")
+    }
+
+    private func llmSwitchMessage(to newChoice: LocalLLMModelChoice) -> String {
+        let oldBytes = ModelCacheCleaner.gemmaCacheSizeBytes(modelId: currentLLMOnScreen.mlxModelId)
+        let existingBytes = ModelCacheCleaner.gemmaCacheSizeBytes(modelId: newChoice.mlxModelId)
+        var lines: [String] = []
+        if existingBytes > 0 {
+            lines.append("\(newChoice.displayName) is already on disk — no download needed.")
+        } else {
+            lines.append("Will download \(newChoice.displayName) now.")
+        }
+        if oldBytes > 0 {
+            let freed = String(format: "%.1f GB", Double(oldBytes) / (Self.megabyte * 1024))
+            lines.append("The current model (\(currentLLMOnScreen.displayName)) will be removed from disk — frees about \(freed).")
+        }
+        return lines.joined(separator: "\n\n")
+    }
+
+    private func cancelWhisperSwitch() {
+        // Picker is bound to whisperKitChoice; revert it back to what
+        // appState actually has, so the UI doesn't display a staged value.
+        whisperKitChoice = currentWhisperOnScreen
+        pendingWhisperSwitch = nil
+    }
+
+    private func cancelLLMSwitch() {
+        localLLMChoice = currentLLMOnScreen
+        pendingLLMSwitch = nil
+    }
+
+    private func confirmWhisperSwitch(to newChoice: WhisperKitModelChoice) {
+        let old = currentWhisperOnScreen
+        pendingWhisperSwitch = nil
+        // Update sentinel + screen state first so all pickers/bindings stay
+        // in sync while the async cleanup + download runs in the background.
+        appState.transcriptionBaseURL = newChoice.sentinelBaseURL
+        currentWhisperOnScreen = newChoice
+        let oldVariant = old.whisperKitIdentifier
+        let newVariant = newChoice.whisperKitIdentifier
+        Task.detached(priority: .userInitiated) {
+            await WhisperKitInstancePool.shared.evict(modelVariant: oldVariant)
+            await WhisperKitDownloadManager.shared.evict(variant: oldVariant)
+            ModelCacheCleaner.deleteWhisperKitVariant(variant: oldVariant)
+            _ = try? await WhisperKitInstancePool.shared.loadOrReturn(modelVariant: newVariant)
+        }
+    }
+
+    private func confirmLLMSwitch(to newChoice: LocalLLMModelChoice) {
+        let old = currentLLMOnScreen
+        pendingLLMSwitch = nil
+        appState.llmBaseURL = newChoice.sentinelBaseURL
+        currentLLMOnScreen = newChoice
+        let oldModelId = old.mlxModelId
+        let newModelId = newChoice.mlxModelId
+        let wantsWarmup = appState.postProcessingEnabled
+        Task.detached(priority: .userInitiated) {
+            await MLXModelContainerPool.shared.evict(modelId: oldModelId)
+            ModelCacheCleaner.deleteGemmaCache(modelId: oldModelId)
+            if wantsWarmup {
+                _ = try? await MLXModelContainerPool.shared.loadOrReturnWithPrimedCache(
+                    modelId: newModelId,
+                    systemPrompt: PostProcessingService.localDictationSystemPrompt
+                )
+            } else {
+                _ = try? await MLXModelContainerPool.shared.loadOrReturn(modelId: newModelId)
             }
         }
     }
@@ -525,7 +647,8 @@ struct GeneralSettingsView: View {
                 }
                 .labelsHidden()
                 .onChange(of: whisperKitChoice) { newValue in
-                    appState.transcriptionBaseURL = newValue.sentinelBaseURL
+                    guard newValue != currentWhisperOnScreen else { return }
+                    pendingWhisperSwitch = newValue
                 }
                 whisperKitDownloadStatus(for: whisperKitChoice.whisperKitIdentifier, downloads: whisperKitDownloads)
             }
@@ -553,58 +676,45 @@ struct GeneralSettingsView: View {
     // MARK: Post-Processing Model
 
     private var postProcessingModelSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Model")
-                .font(.caption.weight(.semibold))
-            Picker("Model", selection: $localLLMChoice) {
-                ForEach(LocalLLMModelChoice.allCases) { choice in
-                    Text(choice.displayName).tag(choice)
-                }
-            }
-            .labelsHidden()
-            .onChange(of: localLLMChoice) { newValue in
-                appState.llmBaseURL = newValue.sentinelBaseURL
-            }
-            localLLMDownloadStatus(for: localLLMChoice.mlxModelId, downloads: llmDownloads)
-            Text("Used for transcript cleanup, Edit Mode transforms, and screen-context inference.")
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle("Clean up transcript with Gemma", isOn: $appState.postProcessingEnabled)
+                .toggleStyle(.switch)
+
+            Text("When off, dictation pastes the raw Whisper transcript — faster (no 1–2s LLM pass) but with less punctuation and filler cleanup. Edit Mode still uses Gemma on demand.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if appState.postProcessingEnabled {
+                Divider()
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Model")
+                        .font(.caption.weight(.semibold))
+                    Picker("Model", selection: $localLLMChoice) {
+                        ForEach(LocalLLMModelChoice.allCases) { choice in
+                            Text(choice.displayName).tag(choice)
+                        }
+                    }
+                    .labelsHidden()
+                    .onChange(of: localLLMChoice) { newValue in
+                        guard newValue != currentLLMOnScreen else { return }
+                        pendingLLMSwitch = newValue
+                    }
+                    localLLMDownloadStatus(for: localLLMChoice.mlxModelId, downloads: llmDownloads)
+                }
+            }
         }
     }
 
     // MARK: Dictation Shortcuts
 
     private var hotkeySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            DictationShortcutEditor { isCapturing in
-                if isCapturing {
-                    appState.suspendHotkeyMonitoringForShortcutCapture()
-                } else {
-                    appState.resumeHotkeyMonitoringAfterShortcutCapture()
-                }
-            }
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Shortcut Start Delay")
-                        .font(.caption.weight(.semibold))
-                    Spacer()
-                    Text("\(appState.shortcutStartDelayMilliseconds) ms")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-
-                Slider(
-                    value: $appState.shortcutStartDelay,
-                    in: 0...0.5,
-                    step: 0.025
-                )
-
-                Text("Applies before recording starts for both hold and tap shortcuts. Stopping still happens immediately.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        DictationShortcutEditor { isCapturing in
+            if isCapturing {
+                appState.suspendHotkeyMonitoringForShortcutCapture()
+            } else {
+                appState.resumeHotkeyMonitoringAfterShortcutCapture()
             }
         }
     }
@@ -673,16 +783,6 @@ struct GeneralSettingsView: View {
 
     // MARK: Clipboard
 
-    private var clipboardSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Toggle("Preserve clipboard after paste", isOn: $appState.preserveClipboard)
-
-            Text("geMMaFloW will temporarily place the transcript on your clipboard to paste it, then restore whatever was there before. If you copy something else before the restore happens, geMMaFloW leaves it alone.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
     // MARK: Microphone
 
     private var microphoneSection: some View {
@@ -711,33 +811,11 @@ struct GeneralSettingsView: View {
         }
     }
 
-    // MARK: Sound Volume
+    // MARK: Alert Sounds
 
-    private var soundVolumeSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Toggle("Play alert sounds", isOn: $appState.alertSoundsEnabled)
-
-            HStack(spacing: 12) {
-                Image(systemName: "speaker.fill")
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
-                Slider(value: $appState.soundVolume, in: 0...1, step: 0.1)
-                Image(systemName: "speaker.wave.3.fill")
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
-                Text("\(Int(appState.soundVolume * 100))%")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 36, alignment: .trailing)
-            }
-            .disabled(!appState.alertSoundsEnabled)
-            .opacity(appState.alertSoundsEnabled ? 1 : 0.5)
-
-            Button("Preview") {
-                appState.playAlertSound(named: "Tink")
-            }
-            .font(.caption)
-            .disabled(!appState.alertSoundsEnabled)
+    private var alertSoundsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle("Play alert sounds on record start and stop", isOn: $appState.alertSoundsEnabled)
         }
     }
 

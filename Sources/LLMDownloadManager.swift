@@ -43,4 +43,11 @@ final class LLMDownloadManager: ObservableObject {
     func isReady(modelId: String) -> Bool {
         readyModelIds.contains(modelId)
     }
+
+    /// Clears the ready flag for a model id. Called after eviction from the
+    /// MLX pool so the UI re-shows "Download & load now" instead of the
+    /// green "Loaded" badge.
+    func markUnready(modelId: String) {
+        readyModelIds.remove(modelId)
+    }
 }

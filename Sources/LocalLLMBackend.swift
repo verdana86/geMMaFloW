@@ -205,6 +205,21 @@ actor MLXModelContainerPool {
         }
     }
 
+    /// Drop the cached `ModelContainer` and any primed KV caches for the
+    /// given model id. Callers use this before switching to a different
+    /// model in Settings, so the old container's VRAM/RAM is freed and the
+    /// new model can be loaded fresh. Any in-flight `loadOrReturn` for the
+    /// same id serializes through the actor and completes first — this
+    /// actor-level serialization is what keeps eviction race-free.
+    func evict(modelId: String) {
+        cache.removeValue(forKey: modelId)
+        let prefix = "\(modelId)|"
+        primedCaches = primedCaches.filter { !$0.key.hasPrefix(prefix) }
+        Task { @MainActor in
+            LLMDownloadManager.shared.markUnready(modelId: modelId)
+        }
+    }
+
     /// Resolve the HuggingFace Hub cache snapshot directory for a given
     /// model repo id. Assumes the model has been pre-downloaded into
     /// `~/.cache/huggingface/hub/models--<slug>/snapshots/<rev>/`.

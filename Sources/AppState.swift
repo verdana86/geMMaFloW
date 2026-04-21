@@ -166,6 +166,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private let transcriptionBaseURLStorageKey = "transcription_base_url"
     private let llmBaseURLStorageKey = "llm_base_url"
     private let transcriptionLanguageStorageKey = "transcription_language"
+    private let postProcessingEnabledStorageKey = "post_processing_enabled"
     private let holdShortcutStorageKey = "hold_shortcut"
     private let toggleShortcutStorageKey = "toggle_shortcut"
     private let savedHoldCustomShortcutStorageKey = "saved_hold_custom_shortcut"
@@ -174,10 +175,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private let selectedMicrophoneStorageKey = "selected_microphone_id"
     private let customContextPromptStorageKey = "custom_context_prompt"
     private let customContextPromptLastModifiedStorageKey = "custom_context_prompt_last_modified"
-    private let shortcutStartDelayStorageKey = "shortcut_start_delay"
-    private let preserveClipboardStorageKey = "preserve_clipboard"
     private let alertSoundsEnabledStorageKey = "alert_sounds_enabled"
-    private let soundVolumeStorageKey = "sound_volume"
     private let voiceMacrosStorageKey = "voice_macros"
     private let commandModeEnabledStorageKey = "command_mode_enabled"
     private let commandModeStyleStorageKey = "command_mode_style"
@@ -207,6 +205,18 @@ final class AppState: ObservableObject, @unchecked Sendable {
     @Published var transcriptionLanguage: String {
         didSet {
             UserDefaults.standard.set(transcriptionLanguage, forKey: transcriptionLanguageStorageKey)
+        }
+    }
+
+    /// When false, dictation skips Gemma cleanup and pastes the raw Whisper
+    /// transcript. Edit Mode (command transforms) still loads Gemma on demand.
+    @Published var postProcessingEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(postProcessingEnabled, forKey: postProcessingEnabledStorageKey)
+            if postProcessingEnabled && !oldValue {
+                // Flipping on → pre-warm so the next dictation is fast.
+                warmupBackends()
+            }
         }
     }
 
@@ -273,27 +283,13 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
-    @Published var shortcutStartDelay: TimeInterval {
-        didSet {
-            UserDefaults.standard.set(shortcutStartDelay, forKey: shortcutStartDelayStorageKey)
-        }
-    }
-
-    @Published var preserveClipboard: Bool {
-        didSet {
-            UserDefaults.standard.set(preserveClipboard, forKey: preserveClipboardStorageKey)
-        }
-    }
+    let shortcutStartDelay: TimeInterval = 0
+    let preserveClipboard: Bool = true
+    let soundVolume: Float = 1.0
 
     @Published var alertSoundsEnabled: Bool {
         didSet {
             UserDefaults.standard.set(alertSoundsEnabled, forKey: alertSoundsEnabledStorageKey)
-        }
-    }
-
-    @Published var soundVolume: Float {
-        didSet {
-            UserDefaults.standard.set(soundVolume, forKey: soundVolumeStorageKey)
         }
     }
 
@@ -374,6 +370,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let llmBaseURL = UserDefaults.standard.string(forKey: llmBaseURLStorageKey)
             ?? Self.defaultLLMBaseURL
         let transcriptionLanguage = UserDefaults.standard.string(forKey: transcriptionLanguageStorageKey) ?? ""
+        let postProcessingEnabled = UserDefaults.standard.object(forKey: postProcessingEnabledStorageKey) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: postProcessingEnabledStorageKey)
         let shortcuts = Self.loadShortcutConfiguration(
             holdKey: holdShortcutStorageKey,
             toggleKey: toggleShortcutStorageKey
@@ -385,7 +384,6 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let customVocabulary = UserDefaults.standard.string(forKey: customVocabularyStorageKey) ?? ""
         let customContextPrompt = UserDefaults.standard.string(forKey: customContextPromptStorageKey) ?? ""
         let customContextPromptLastModified = UserDefaults.standard.string(forKey: customContextPromptLastModifiedStorageKey) ?? ""
-        let shortcutStartDelay = max(0, UserDefaults.standard.double(forKey: shortcutStartDelayStorageKey))
         let isCommandModeEnabled = UserDefaults.standard.object(forKey: commandModeEnabledStorageKey) == nil
             ? false
             : UserDefaults.standard.bool(forKey: commandModeEnabledStorageKey)
@@ -395,14 +393,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let commandModeManualModifier = CommandModeManualModifier(
             rawValue: UserDefaults.standard.string(forKey: commandModeManualModifierStorageKey) ?? ""
         ) ?? .option
-        let preserveClipboard = UserDefaults.standard.object(forKey: preserveClipboardStorageKey) == nil
+        let alertSoundsEnabled = UserDefaults.standard.object(forKey: alertSoundsEnabledStorageKey) == nil
             ? true
-            : UserDefaults.standard.bool(forKey: preserveClipboardStorageKey)
-        let soundVolume: Float = UserDefaults.standard.object(forKey: soundVolumeStorageKey) != nil
-            ? UserDefaults.standard.float(forKey: soundVolumeStorageKey) : 1.0
-        let alertSoundsEnabled = UserDefaults.standard.object(forKey: alertSoundsEnabledStorageKey) != nil
-            ? UserDefaults.standard.bool(forKey: alertSoundsEnabledStorageKey)
-            : soundVolume > 0
+            : UserDefaults.standard.bool(forKey: alertSoundsEnabledStorageKey)
         
         let initialMacros: [VoiceMacro]
         if let data = UserDefaults.standard.data(forKey: "voice_macros"),
@@ -434,6 +427,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         self.transcriptionBaseURL = transcriptionBaseURL
         self.llmBaseURL = llmBaseURL
         self.transcriptionLanguage = transcriptionLanguage
+        self.postProcessingEnabled = postProcessingEnabled
         self.holdShortcut = shortcuts.hold
         self.toggleShortcut = shortcuts.toggle
         self.savedHoldCustomShortcut = savedHoldCustomShortcut
@@ -444,10 +438,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         self.customVocabulary = customVocabulary
         self.customContextPrompt = customContextPrompt
         self.customContextPromptLastModified = customContextPromptLastModified
-        self.shortcutStartDelay = shortcutStartDelay
-        self.preserveClipboard = preserveClipboard
         self.alertSoundsEnabled = alertSoundsEnabled
-        self.soundVolume = soundVolume
         self.voiceMacros = initialMacros
         self.pipelineHistory = savedHistory
         self.hasAccessibility = initialAccessibility
@@ -720,6 +711,11 @@ final class AppState: ObservableObject, @unchecked Sendable {
             }
         }
 
+        // Skip the ~2 GB Gemma download/load when the user has turned
+        // post-processing off. Edit Mode still works — it just pays the
+        // cold-start on first invocation.
+        guard postProcessingEnabled else { return }
+
         if let kind = try? LLMBackendKind.parse(baseURL: llmURL),
            case .localMLX(let modelId) = kind {
             let resolvedId = modelId ?? LocalLLMModelChoice.default.mlxModelId
@@ -869,10 +865,6 @@ final class AppState: ObservableObject, @unchecked Sendable {
         case (false, false):
             return "No dictation shortcut enabled"
         }
-    }
-
-    var shortcutStartDelayMilliseconds: Int {
-        Int((shortcutStartDelay * 1000).rounded())
     }
 
     func savedCustomShortcut(for role: ShortcutRole) -> ShortcutBinding? {
@@ -1512,6 +1504,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
     private enum TranscriptProcessingOutcome {
         case skippedEmptyRawTranscript
+        case postProcessingDisabled
         case voiceMacro(command: String)
         case postProcessingSucceeded
         case postProcessingFailedFallback
@@ -1522,6 +1515,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
             switch self {
             case .skippedEmptyRawTranscript:
                 return "Skipped macros and post-processing for empty raw transcript"
+            case .postProcessingDisabled:
+                return "Post-processing disabled, using raw Whisper transcript"
             case .voiceMacro(let command):
                 return "Voice macro used: \(command)"
             case .postProcessingSucceeded:
@@ -1570,7 +1565,11 @@ final class AppState: ObservableObject, @unchecked Sendable {
             os_log(.info, log: recordingLog, "Voice macro triggered: %{public}@", macro.command)
             return (macro.payload, .voiceMacro(command: macro.command), "")
         }
-        
+
+        if !postProcessingEnabled {
+            return (trimmedRawTranscript, .postProcessingDisabled, "")
+        }
+
         do {
             let result = try await postProcessingService.postProcess(
                 transcript: trimmedRawTranscript,
