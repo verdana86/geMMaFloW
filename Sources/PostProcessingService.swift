@@ -148,30 +148,25 @@ Behavior:
     private let postProcessingTimeoutSeconds: TimeInterval = 300
 
     init(
-        apiKey: String,
-        baseURL: String = "https://api.groq.com/openai/v1",
+        apiKey: String = "",
+        baseURL: String = "",
         preferredModel: String = "",
         preferredFallbackModel: String = ""
     ) {
-        // Route to local (MLX / bundled Gemma) or remote OpenAI-compatible
-        // backend based on the baseURL scheme. Parsing errors fall back to
-        // remote to preserve existing behavior for legacy configurations.
-        if let kind = try? LLMBackendKind.parse(baseURL: baseURL) {
-            switch kind {
-            case .remoteOpenAI(let url):
-                self.backend = RemoteOpenAILLMBackend(apiKey: apiKey, baseURL: url)
-                self.backendIsLocal = false
-            case .localMLX(let modelId):
-                let resolvedId = modelId ?? LocalLLMModelChoice.default.mlxModelId
-                self.backend = LocalLLMBackend(modelId: resolvedId)
-                self.backendIsLocal = true
-            }
+        // Local-only post-processing via MLX. Any baseURL that isn't a
+        // `local://mlx/...` sentinel gets mapped to the default local model.
+        let modelId: String
+        if let kind = try? LLMBackendKind.parse(baseURL: baseURL),
+           case .localMLX(let id) = kind {
+            modelId = id ?? LocalLLMModelChoice.default.mlxModelId
         } else {
-            self.backend = RemoteOpenAILLMBackend(apiKey: apiKey, baseURL: baseURL)
-            self.backendIsLocal = false
+            modelId = LocalLLMModelChoice.default.mlxModelId
         }
+        self.backend = LocalLLMBackend(modelId: modelId)
+        self.backendIsLocal = true
         self.preferredModel = preferredModel.trimmingCharacters(in: .whitespacesAndNewlines)
         self.preferredFallbackModel = preferredFallbackModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        _ = apiKey  // kept for API compat; unused in local-only path
     }
 
     /// Translates LLMBackendError (the shared transport-level error) into

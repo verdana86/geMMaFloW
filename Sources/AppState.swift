@@ -903,6 +903,38 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// Pre-load local models in the background so the first dictation
+    /// doesn't pay the cold-start cost (Whisper: ANE compile ~5-30s;
+    /// Gemma: model load + KV cache prime ~3-5s). Safe to call multiple
+    /// times — the underlying actors are idempotent. Skips silently for
+    /// non-local backends.
+    func warmupBackends() {
+        let transcriptionURL = effectiveTranscriptionBaseURL
+        let llmURL = effectiveLLMBaseURL
+
+        if let kind = try? TranscriptionBackendKind.parse(baseURL: transcriptionURL),
+           case .local(let identifier) = kind {
+            let parsed = LocalBackendIdentifier.parse(identifier)
+            if parsed.runtime == "whisperkit" {
+                let variant = parsed.modelVariant
+                Task.detached(priority: .utility) {
+                    _ = try? await WhisperKitInstancePool.shared.loadOrReturn(modelVariant: variant)
+                }
+            }
+        }
+
+        if let kind = try? LLMBackendKind.parse(baseURL: llmURL),
+           case .localMLX(let modelId) = kind {
+            let resolvedId = modelId ?? LocalLLMModelChoice.default.mlxModelId
+            Task.detached(priority: .utility) {
+                _ = try? await MLXModelContainerPool.shared.loadOrReturnWithPrimedCache(
+                    modelId: resolvedId,
+                    systemPrompt: PostProcessingService.localDictationSystemPrompt
+                )
+            }
+        }
+    }
+
     func startAccessibilityPolling() {
         accessibilityTimer?.invalidate()
         hasAccessibility = AXIsProcessTrusted()

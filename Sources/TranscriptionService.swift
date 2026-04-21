@@ -10,55 +10,39 @@ class TranscriptionService {
     private let uploadChannelCount: AVAudioChannelCount = 1
 
     init(
-        apiKey: String,
-        baseURL: String = "https://api.groq.com/openai/v1",
+        apiKey: String = "",
+        baseURL: String = "",
         transcriptionModel: String = "whisper-large-v3",
         transcriptionLanguage: String? = nil
     ) throws {
-        let trimmedModel = transcriptionModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedModel = trimmedModel.isEmpty ? "whisper-large-v3" : trimmedModel
-
         let trimmedLanguage = transcriptionLanguage?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedLanguage: String? = (trimmedLanguage?.isEmpty == false) ? trimmedLanguage : nil
 
-        let kind = try TranscriptionBackendKind.parse(baseURL: baseURL)
-        switch kind {
-        case .remoteOpenAI(let url):
-            self.backend = RemoteOpenAITranscriptionBackend(
-                apiKey: apiKey,
-                baseURL: url,
-                transcriptionModel: resolvedModel
-            )
-        case .local(let identifier):
+        // Local-only transcription via WhisperKit. Any baseURL that isn't a
+        // `local://whisperkit/...` sentinel falls back to the default variant.
+        var variant: String?
+        if let kind = try? TranscriptionBackendKind.parse(baseURL: baseURL),
+           case .local(let identifier) = kind {
             let parsed = LocalBackendIdentifier.parse(identifier)
-            switch parsed.runtime {
-            case "whisperkit":
-                self.backend = WhisperKitBackend(
-                    modelVariant: parsed.modelVariant,
-                    language: resolvedLanguage
-                )
-            default:
-                self.backend = LocalTranscriptionBackend(identifier: identifier)
+            if parsed.runtime == "whisperkit" {
+                variant = parsed.modelVariant
             }
         }
+        self.backend = WhisperKitBackend(
+            modelVariant: variant,
+            language: resolvedLanguage
+        )
+        _ = apiKey  // kept for API compat; unused in local-only path
+        _ = transcriptionModel
     }
 
-    /// Validate credentials. Remote backends hit `GET {baseURL}/models` and
-    /// expect 200. Local backends have nothing to validate and always return
-    /// `true` — they fail at transcribe-time if the model is missing.
+    /// Local-only backend needs no API key validation. Kept for API
+    /// compatibility with call sites that haven't been updated.
     static func validateAPIKey(
         _ key: String,
-        baseURL: String = "https://api.groq.com/openai/v1"
+        baseURL: String = ""
     ) async -> Bool {
-        guard let kind = try? TranscriptionBackendKind.parse(baseURL: baseURL) else {
-            return false
-        }
-        switch kind {
-        case .remoteOpenAI(let url):
-            return await RemoteOpenAITranscriptionBackend.validateAPIKey(key, baseURL: url)
-        case .local:
-            return true
-        }
+        return true
     }
 
     func transcribe(fileURL: URL) async throws -> String {

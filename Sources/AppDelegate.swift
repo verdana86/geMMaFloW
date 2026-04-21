@@ -39,6 +39,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             appState.startHotkeyMonitoring()
             appState.startAccessibilityPolling()
+            appState.warmupBackends()
             Task { @MainActor in
                 UpdateManager.shared.startPeriodicChecks()
             }
@@ -167,6 +168,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         appState.startHotkeyMonitoring()
         appState.startAccessibilityPolling()
+        appState.warmupBackends()
         Task { @MainActor in
             UpdateManager.shared.startPeriodicChecks()
         }
