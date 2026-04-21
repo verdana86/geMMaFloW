@@ -133,6 +133,7 @@ clean-user-state:
 	-rm -rf "/Applications/$(APP_NAME).app"
 	-rm -rf "$$HOME/Library/Caches/$(BUNDLE_ID)"
 	-rm -rf "$$HOME/Library/Application Support/$(APP_NAME)"
+	-defaults delete $(BUNDLE_ID) 2>/dev/null || true
 	-rm -rf "$$HOME/Documents/huggingface/models/argmaxinc/whisperkit-coreml"
 	-find "$$HOME/Documents/huggingface/models/mlx-community" -maxdepth 1 -type d -name 'gemma*' -exec rm -rf {} + 2>/dev/null || true
 	-rm -rf "$$HOME/.cache/huggingface/hub/models--argmaxinc--whisperkit-coreml"

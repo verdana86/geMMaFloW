@@ -8,9 +8,12 @@ struct WhisperKitModelChoiceTests {
         #expect(WhisperKitModelChoice.default == .large)
     }
 
-    @Test("Turbo sentinel encodes the 630MB quantized turbo identifier")
-    func turboSentinel() {
-        #expect(WhisperKitModelChoice.turbo.sentinelBaseURL == "local://whisperkit/openai_whisper-large-v3-v20240930_turbo_632MB")
+    @Test("Legacy Turbo sentinel URL falls back to the default (Large)")
+    func legacyTurboURLMapsToDefault() {
+        // Turbo was removed from the picker because it hangs in
+        // MLE5Engine.loadModel. Old installs with a Turbo-scoped URL in
+        // UserDefaults must resolve to Large rather than return nil.
+        #expect(WhisperKitModelChoice.fromSentinelBaseURL("local://whisperkit/openai_whisper-large-v3-v20240930_turbo_632MB") == nil)
     }
 
     @Test("Large sentinel encodes the full 1.5GB identifier")
@@ -52,9 +55,9 @@ struct WhisperKitModelChoiceTests {
         #expect(WhisperKitModelChoice.fromSentinelBaseURL("") == nil)
     }
 
-    @Test("allCases has exactly three presets (no more Auto)")
-    func exactlyThreePresets() {
-        #expect(WhisperKitModelChoice.allCases.count == 3)
-        #expect(Set(WhisperKitModelChoice.allCases) == Set([.turbo, .large, .small]))
+    @Test("allCases has Large and Small only — Turbo is hidden due to load hang")
+    func exactlyTwoPresets() {
+        #expect(WhisperKitModelChoice.allCases.count == 2)
+        #expect(Set(WhisperKitModelChoice.allCases) == Set([.large, .small]))
     }
 }

@@ -9,22 +9,24 @@ import Foundation
 /// Forcing an explicit preset keeps the progress bar reliable on every
 /// first-run.
 enum WhisperKitModelChoice: String, CaseIterable, Identifiable {
-    case turbo
     case large
     case small
 
     /// Default when the user opts into WhisperKit without picking a preset.
-    /// Large matches what WhisperKit would auto-select on M2+ — stable across
-    /// model loads. Turbo is faster but hangs on load under some conditions
-    /// (needs investigation). Users who want faster cold starts switch to
-    /// Turbo manually from Settings.
+    /// Large matches what WhisperKit would auto-select on M2+ — stable
+    /// across model loads.
+    ///
+    /// Turbo was removed: it hangs indefinitely in MLE5Engine.loadModel on
+    /// M-series GPUs. Root cause unresolved upstream; until it's fixed we
+    /// ship only Large + Small so the picker can't strand a user on a
+    /// non-loading model. Legacy installs with a Turbo sentinel URL fall
+    /// back to `.default` via `fromSentinelBaseURL`.
     static let `default`: WhisperKitModelChoice = .large
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .turbo: return "Turbo — fast + accurate (~630 MB)"
         case .large: return "Large-v3 — most accurate (~1.5 GB)"
         case .small: return "Small — low-latency (~220 MB)"
         }
@@ -33,7 +35,6 @@ enum WhisperKitModelChoice: String, CaseIterable, Identifiable {
     /// Hugging Face folder name inside `argmaxinc/whisperkit-coreml`.
     var whisperKitIdentifier: String {
         switch self {
-        case .turbo: return "openai_whisper-large-v3-v20240930_turbo_632MB"
         case .large: return "openai_whisper-large-v3-v20240930"
         case .small: return "openai_whisper-small_216MB"
         }

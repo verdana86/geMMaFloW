@@ -1311,48 +1311,28 @@ final class AppState: ObservableObject, @unchecked Sendable {
         errorMessage = nil
 
         isRecording = true
-        statusText = "Starting..."
+        statusText = "Recording..."
         hasShownScreenshotPermissionAlert = false
 
-        // Show initializing dots only if engine takes longer than 0.2s to start
-        var overlayShown = false
+        // Show the recording overlay immediately on key press. AVCaptureSession
+        // takes ~50-150ms to start producing buffers, plus the user's mouth
+        // has to produce a non-silent sample — together ~200-600ms before the
+        // old "transition to waveform" trigger fired. During that gap the
+        // overlay stayed hidden and the user perceived the shortcut as lagging
+        // (or thought it only fired on release). The waveform harmlessly shows
+        // a flat line until audio arrives.
         cancelRecordingInitializationTimer()
-        let initTimer = DispatchSource.makeTimerSource(queue: .main)
-        recordingInitializationTimer = initTimer
-        initTimer.schedule(deadline: .now() + 0.2)
-        initTimer.setEventHandler { [weak self] in
-            guard let self, !overlayShown else { return }
-            overlayShown = true
-            os_log(.info, log: recordingLog, "engine slow — showing initializing overlay")
-            self.clearPendingOverlayDismissToken()
-            self.overlayManager.showInitializing(
-                mode: self.activeRecordingTriggerMode ?? triggerMode,
-                isCommandMode: self.currentSessionIntent.isCommandMode
-            )
-        }
-        initTimer.resume()
+        clearPendingOverlayDismissToken()
+        overlayManager.showRecording(
+            mode: activeRecordingTriggerMode ?? triggerMode,
+            isCommandMode: currentSessionIntent.isCommandMode
+        )
 
-        // Transition to waveform when first real audio arrives (any non-zero RMS)
         let deviceUID = selectedMicrophoneID
         audioRecorder.onRecordingReady = { [weak self] in
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.cancelRecordingInitializationTimer()
-                os_log(.info, log: recordingLog, "first real audio — transitioning to waveform")
-                self.statusText = "Recording..."
-                self.clearPendingOverlayDismissToken()
-                if overlayShown {
-                    self.overlayManager.transitionToRecording(
-                        mode: self.activeRecordingTriggerMode ?? triggerMode,
-                        isCommandMode: self.currentSessionIntent.isCommandMode
-                    )
-                } else {
-                    self.overlayManager.showRecording(
-                        mode: self.activeRecordingTriggerMode ?? triggerMode,
-                        isCommandMode: self.currentSessionIntent.isCommandMode
-                    )
-                }
-                overlayShown = true
+                os_log(.info, log: recordingLog, "first real audio — waveform now driven by live input")
                 self.playAlertSound(named: "Tink")
             }
         }

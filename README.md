@@ -14,6 +14,16 @@
 
 ---
 
+<p align="center">
+  <img src="Resources/demo.gif" alt="geMMaFloW demo" width="600">
+</p>
+
+<p align="center">
+  <i>Demo preserved from upstream <a href="https://github.com/zachlatta/freeflow">FreeFlow</a> — the UX is identical, only the backend changed (local WhisperKit + Gemma 4 instead of cloud Groq).</i>
+</p>
+
+---
+
 ## What is geMMaFloW?
 
 geMMaFloW is a macOS menu-bar dictation app. You hold a hotkey (`Fn` by default), talk, release, and a cleaned-up transcript gets pasted into whatever text field you were focused on — email, Slack, code editor, browser, anything. Think Wispr Flow, Superwhisper, or Monologue — but **nothing ever leaves your Mac**. No cloud, no API keys, no account, no telemetry. Speech recognition and text cleanup both run locally on Apple Silicon.
