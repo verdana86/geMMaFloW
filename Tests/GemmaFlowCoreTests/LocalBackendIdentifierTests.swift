@@ -1,5 +1,5 @@
 import Testing
-@testable import FreeFlowCore
+@testable import GemmaFlowCore
 
 @Suite("LocalBackendIdentifier — parses runtime and optional variant")
 struct LocalBackendIdentifierTests {

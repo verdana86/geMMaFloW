@@ -38,565 +38,92 @@ private let iso8601DayFormatter: DateFormatter = {
     return formatter
 }()
 
-struct ProviderSettingsFields: View {
-    @EnvironmentObject var appState: AppState
-    @Binding var apiBaseURLInput: String
-    @FocusState private var isEditingAPIBaseURL: Bool
-    @FocusState private var isEditingTranscriptionModel: Bool
-    @FocusState private var isEditingPostProcessingModel: Bool
-    @FocusState private var isEditingPostProcessingFallbackModel: Bool
-    @FocusState private var isEditingContextModel: Bool
-    @State private var transcriptionModelDraft: String = ""
-    @State private var postProcessingModelDraft: String = ""
-    @State private var postProcessingFallbackModelDraft: String = ""
-    @State private var contextModelDraft: String = ""
-    @State private var transcriptionBaseURLDraft: String = ""
-    @State private var transcriptionAPIKeyDraft: String = ""
-    @State private var llmBaseURLDraft: String = ""
-    @State private var llmAPIKeyDraft: String = ""
-    @State private var overridesExpanded: Bool = false
-    @FocusState private var isEditingTranscriptionBaseURL: Bool
-    @FocusState private var isEditingTranscriptionAPIKey: Bool
-    @FocusState private var isEditingLLMBaseURL: Bool
-    @FocusState private var isEditingLLMAPIKey: Bool
-    @State private var whisperKitChoice: WhisperKitModelChoice = .default
-    @State private var transcriptionLanguage: TranscriptionLanguage = .auto
-    @State private var localLLMChoice: LocalLLMModelChoice = .default
-    @ObservedObject private var whisperKitDownloads = WhisperKitDownloadManager.shared
-    @ObservedObject private var llmDownloads = LLMDownloadManager.shared
+// MARK: - Shared Download Status Views
 
-    let showsModelDescription: Bool
+@MainActor
+@ViewBuilder
+private func whisperKitDownloadStatus(
+    for variant: String,
+    downloads: WhisperKitDownloadManager
+) -> some View {
+    let isActive = downloads.isDownloading && downloads.currentVariant == variant
+    let isCached = downloads.cachedFolder(for: variant) != nil
 
-    private func commitAPIBaseURL() {
-        let trimmed = apiBaseURLInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedBaseURL = trimmed.isEmpty ? AppState.defaultAPIBaseURL : trimmed
-        apiBaseURLInput = resolvedBaseURL
-        appState.apiBaseURL = resolvedBaseURL
-    }
-
-    private func commitTranscriptionModel() {
-        let trimmed = transcriptionModelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        transcriptionModelDraft = trimmed
-        guard appState.transcriptionModel != trimmed else { return }
-        appState.transcriptionModel = trimmed
-    }
-
-    private func commitPostProcessingModel() {
-        let trimmed = postProcessingModelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        postProcessingModelDraft = trimmed
-        guard appState.postProcessingModel != trimmed else { return }
-        appState.postProcessingModel = trimmed
-    }
-
-    private func commitPostProcessingFallbackModel() {
-        let trimmed = postProcessingFallbackModelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        postProcessingFallbackModelDraft = trimmed
-        guard appState.postProcessingFallbackModel != trimmed else { return }
-        appState.postProcessingFallbackModel = trimmed
-    }
-
-    private func commitContextModel() {
-        let trimmed = contextModelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        contextModelDraft = trimmed
-        guard appState.contextModel != trimmed else { return }
-        appState.contextModel = trimmed
-    }
-
-    private func commitTranscriptionBaseURL() {
-        let trimmed = transcriptionBaseURLDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        transcriptionBaseURLDraft = trimmed
-        guard appState.transcriptionBaseURL != trimmed else { return }
-        appState.transcriptionBaseURL = trimmed
-    }
-
-    private func commitTranscriptionAPIKey() {
-        let trimmed = transcriptionAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        transcriptionAPIKeyDraft = trimmed
-        guard appState.transcriptionAPIKey != trimmed else { return }
-        appState.transcriptionAPIKey = trimmed
-    }
-
-    private func commitLLMBaseURL() {
-        let trimmed = llmBaseURLDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        llmBaseURLDraft = trimmed
-        guard appState.llmBaseURL != trimmed else { return }
-        appState.llmBaseURL = trimmed
-    }
-
-    private func commitLLMAPIKey() {
-        let trimmed = llmAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        llmAPIKeyDraft = trimmed
-        guard appState.llmAPIKey != trimmed else { return }
-        appState.llmAPIKey = trimmed
-    }
-
-    private func applyOllamaLLMPreset() {
-        llmBaseURLDraft = "http://localhost:11434/v1"
-        llmAPIKeyDraft = "ollama"
-        commitLLMBaseURL()
-        commitLLMAPIKey()
-    }
-
-    private func applyWhisperKitTranscriptionPreset() {
-        whisperKitChoice = .default
-        transcriptionBaseURLDraft = WhisperKitModelChoice.default.sentinelBaseURL
-        transcriptionAPIKeyDraft = ""
-        commitTranscriptionBaseURL()
-        commitTranscriptionAPIKey()
-    }
-
-    private var isUsingWhisperKit: Bool {
-        WhisperKitModelChoice.fromSentinelBaseURL(transcriptionBaseURLDraft) != nil
-            || transcriptionBaseURLDraft.hasPrefix("local://whisperkit")
-    }
-
-    private func applyWhisperKitModelChoice(_ choice: WhisperKitModelChoice) {
-        whisperKitChoice = choice
-        transcriptionBaseURLDraft = choice.sentinelBaseURL
-        commitTranscriptionBaseURL()
-    }
-
-    private func applyBundledGemmaLLMPreset() {
-        localLLMChoice = .default
-        llmBaseURLDraft = LocalLLMModelChoice.default.sentinelBaseURL
-        llmAPIKeyDraft = ""
-        commitLLMBaseURL()
-        commitLLMAPIKey()
-    }
-
-    private var isUsingLocalLLM: Bool {
-        LocalLLMModelChoice.fromSentinelBaseURL(llmBaseURLDraft) != nil
-            || llmBaseURLDraft.hasPrefix("local://mlx")
-    }
-
-    private func applyLocalLLMModelChoice(_ choice: LocalLLMModelChoice) {
-        localLLMChoice = choice
-        llmBaseURLDraft = choice.sentinelBaseURL
-        commitLLMBaseURL()
-    }
-
-    private func applyTranscriptionLanguage(_ language: TranscriptionLanguage) {
-        transcriptionLanguage = language
-        guard appState.transcriptionLanguage != language.isoCode else { return }
-        appState.transcriptionLanguage = language.isoCode
-    }
-
-    @ViewBuilder
-    private func localLLMDownloadStatusView(for modelId: String) -> some View {
-        let isActive = llmDownloads.isDownloading && llmDownloads.currentModelId == modelId
-        let isReady = llmDownloads.isReady(modelId: modelId)
-
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("Model status:")
-                    .font(.caption)
-                Spacer()
-                if isActive {
-                    Text("\(Int(llmDownloads.progressFraction * 100))%")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                } else if isReady {
-                    Label("Loaded", systemImage: "checkmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.green)
-                        .labelStyle(.titleAndIcon)
-                } else {
-                    Button("Download & load now") {
-                        Task.detached(priority: .userInitiated) {
-                            _ = try? await MLXModelContainerPool.shared.loadOrReturn(modelId: modelId)
-                        }
-                    }
-                    .font(.caption)
-                }
-            }
-            if isActive {
-                ProgressView(value: llmDownloads.progressFraction)
-                    .progressViewStyle(.linear)
-            }
-            if let error = llmDownloads.errorMessage, llmDownloads.currentModelId == nil {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func whisperKitDownloadStatusView(for variant: String) -> some View {
-        let isActive = whisperKitDownloads.isDownloading
-            && whisperKitDownloads.currentVariant == variant
-        let isCached = whisperKitDownloads.cachedFolder(for: variant) != nil
-
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("Model status:")
-                    .font(.caption)
-                Spacer()
-                if isActive {
-                    Text("\(Int(whisperKitDownloads.progressFraction * 100))%")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                } else if isCached {
-                    Label("Ready", systemImage: "checkmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.green)
-                        .labelStyle(.titleAndIcon)
-                } else {
-                    Button("Download now") {
-                        Task {
-                            _ = try? await whisperKitDownloads.ensureModel(variant: variant)
-                        }
-                    }
-                    .font(.caption)
-                }
-            }
-            if isActive {
-                ProgressView(value: whisperKitDownloads.progressFraction)
-                    .progressViewStyle(.linear)
-            }
-            if let error = whisperKitDownloads.errorMessage,
-               whisperKitDownloads.currentVariant == variant {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-        }
-    }
-
-    private func clearLLMOverride() {
-        llmBaseURLDraft = ""
-        llmAPIKeyDraft = ""
-        commitLLMBaseURL()
-        commitLLMAPIKey()
-    }
-
-    private func clearTranscriptionOverride() {
-        transcriptionBaseURLDraft = ""
-        transcriptionAPIKeyDraft = ""
-        commitTranscriptionBaseURL()
-        commitTranscriptionAPIKey()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("API Base URL")
-                .font(.caption.weight(.semibold))
-
-            Text("Change this to use a different OpenAI-compatible API provider.")
+    VStack(alignment: .leading, spacing: 4) {
+        HStack {
+            Text("Model status:")
                 .font(.caption)
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 8) {
-                TextField(AppState.defaultAPIBaseURL, text: $apiBaseURLInput)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.body, design: .monospaced))
-                    .focused($isEditingAPIBaseURL)
-                    .onSubmit {
-                        commitAPIBaseURL()
+            Spacer()
+            if isActive {
+                Text("\(Int(downloads.progressFraction * 100))%")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            } else if isCached {
+                Label("Ready", systemImage: "checkmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+                    .labelStyle(.titleAndIcon)
+            } else {
+                Button("Download now") {
+                    Task {
+                        _ = try? await downloads.ensureModel(variant: variant)
                     }
-                    .onChange(of: isEditingAPIBaseURL) { isEditing in
-                        if !isEditing {
-                            commitAPIBaseURL()
-                        }
-                    }
-
-                Button("Reset to Default") {
-                    apiBaseURLInput = AppState.defaultAPIBaseURL
-                    appState.apiBaseURL = AppState.defaultAPIBaseURL
                 }
                 .font(.caption)
             }
+        }
+        if isActive {
+            ProgressView(value: downloads.progressFraction)
+                .progressViewStyle(.linear)
+        }
+        if let error = downloads.errorMessage, downloads.currentVariant == variant {
+            Text(error)
+                .font(.caption)
+                .foregroundStyle(.red)
+        }
+    }
+}
 
-            if showsModelDescription {
-                Text("If you use another provider, enter that provider's model IDs here.")
-                    .font(.caption)
+@MainActor
+@ViewBuilder
+private func localLLMDownloadStatus(
+    for modelId: String,
+    downloads: LLMDownloadManager
+) -> some View {
+    let isActive = downloads.isDownloading && downloads.currentModelId == modelId
+    let isReady = downloads.isReady(modelId: modelId)
+
+    VStack(alignment: .leading, spacing: 4) {
+        HStack {
+            Text("Model status:")
+                .font(.caption)
+            Spacer()
+            if isActive {
+                Text("\(Int(downloads.progressFraction * 100))%")
+                    .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Transcription Model")
-                    .font(.caption.weight(.semibold))
-                HStack(spacing: 8) {
-                    TextField(AppState.defaultTranscriptionModel, text: $transcriptionModelDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .focused($isEditingTranscriptionModel)
-                        .onSubmit {
-                            commitTranscriptionModel()
-                        }
-                        .onChange(of: isEditingTranscriptionModel) { isEditing in
-                            if !isEditing {
-                                commitTranscriptionModel()
-                            }
-                        }
-                    Button("Reset to Default") {
-                        transcriptionModelDraft = AppState.defaultTranscriptionModel
-                        appState.transcriptionModel = AppState.defaultTranscriptionModel
-                    }
+            } else if isReady {
+                Label("Loaded", systemImage: "checkmark.circle.fill")
                     .font(.caption)
-                }
-                Text("Used for speech-to-text transcription.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Post-Processing Model")
-                    .font(.caption.weight(.semibold))
-                HStack(spacing: 8) {
-                    TextField(AppState.defaultPostProcessingModel, text: $postProcessingModelDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .focused($isEditingPostProcessingModel)
-                        .onSubmit {
-                            commitPostProcessingModel()
-                        }
-                        .onChange(of: isEditingPostProcessingModel) { isEditing in
-                            if !isEditing {
-                                commitPostProcessingModel()
-                            }
-                        }
-                    Button("Reset to Default") {
-                        postProcessingModelDraft = AppState.defaultPostProcessingModel
-                        appState.postProcessingModel = AppState.defaultPostProcessingModel
-                    }
-                    .font(.caption)
-                }
-                Text("Used for transcript cleanup and Edit Mode transforms.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Post-Processing Fallback Model")
-                    .font(.caption.weight(.semibold))
-                HStack(spacing: 8) {
-                    TextField(AppState.defaultPostProcessingFallbackModel, text: $postProcessingFallbackModelDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .focused($isEditingPostProcessingFallbackModel)
-                        .onSubmit {
-                            commitPostProcessingFallbackModel()
-                        }
-                        .onChange(of: isEditingPostProcessingFallbackModel) { isEditing in
-                            if !isEditing {
-                                commitPostProcessingFallbackModel()
-                            }
-                        }
-                    Button("Reset to Default") {
-                        postProcessingFallbackModelDraft = AppState.defaultPostProcessingFallbackModel
-                        appState.postProcessingFallbackModel = AppState.defaultPostProcessingFallbackModel
-                    }
-                    .font(.caption)
-                }
-                Text("Used as the explicit retry model for transcript cleanup and Edit Mode transforms.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Context Model")
-                    .font(.caption.weight(.semibold))
-                HStack(spacing: 8) {
-                    TextField(AppState.defaultContextModel, text: $contextModelDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .focused($isEditingContextModel)
-                        .onSubmit {
-                            commitContextModel()
-                        }
-                        .onChange(of: isEditingContextModel) { isEditing in
-                            if !isEditing {
-                                commitContextModel()
-                            }
-                        }
-                    Button("Reset to Default") {
-                        contextModelDraft = AppState.defaultContextModel
-                        appState.contextModel = AppState.defaultContextModel
-                    }
-                    .font(.caption)
-                }
-                Text("Used for context inference, with a text-only retry when screenshot analysis fails.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            DisclosureGroup(isExpanded: $overridesExpanded) {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("Route transcription and LLM traffic to different providers. Empty fields fall back to the API Base URL and API key above, so existing setups keep working unchanged.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("Transcription Provider Override")
-                                .font(.caption.weight(.semibold))
-                            Spacer()
-                            Button("Use WhisperKit") { applyWhisperKitTranscriptionPreset() }
-                                .font(.caption)
-                            Button("Clear") { clearTranscriptionOverride() }
-                                .font(.caption)
-                                .disabled(transcriptionBaseURLDraft.isEmpty && transcriptionAPIKeyDraft.isEmpty)
-                        }
-                        TextField("Base URL (e.g. https://api.groq.com/openai/v1)", text: $transcriptionBaseURLDraft)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(.body, design: .monospaced))
-                            .focused($isEditingTranscriptionBaseURL)
-                            .onSubmit { commitTranscriptionBaseURL() }
-                            .onChange(of: isEditingTranscriptionBaseURL) { editing in
-                                if !editing { commitTranscriptionBaseURL() }
-                            }
-                        SecureField("API key (leave empty to reuse the default)", text: $transcriptionAPIKeyDraft)
-                            .textFieldStyle(.roundedBorder)
-                            .focused($isEditingTranscriptionAPIKey)
-                            .onSubmit { commitTranscriptionAPIKey() }
-                            .onChange(of: isEditingTranscriptionAPIKey) { editing in
-                                if !editing { commitTranscriptionAPIKey() }
-                            }
-
-                        if isUsingWhisperKit {
-                            HStack {
-                                Text("Model:")
-                                    .font(.caption)
-                                Picker("", selection: $whisperKitChoice) {
-                                    ForEach(WhisperKitModelChoice.allCases) { choice in
-                                        Text(choice.displayName).tag(choice)
-                                    }
-                                }
-                                .labelsHidden()
-                                .onChange(of: whisperKitChoice) { newValue in
-                                    applyWhisperKitModelChoice(newValue)
-                                }
-                            }
-                            HStack {
-                                Text("Language:")
-                                    .font(.caption)
-                                Picker("", selection: $transcriptionLanguage) {
-                                    ForEach(TranscriptionLanguage.allCases) { language in
-                                        Text(language.displayName).tag(language)
-                                    }
-                                }
-                                .labelsHidden()
-                                .onChange(of: transcriptionLanguage) { newValue in
-                                    applyTranscriptionLanguage(newValue)
-                                }
-                            }
-
-                            whisperKitDownloadStatusView(for: whisperKitChoice.whisperKitIdentifier)
-
-                            Text("Model is downloaded on first use. Auto-detect language works but can be unreliable on short clips — pick a specific language to lock it.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("LLM Provider Override")
-                                .font(.caption.weight(.semibold))
-                            Spacer()
-                            Button("Use bundled Gemma") { applyBundledGemmaLLMPreset() }
-                                .font(.caption)
-                            Button("Use Ollama") { applyOllamaLLMPreset() }
-                                .font(.caption)
-                            Button("Clear") { clearLLMOverride() }
-                                .font(.caption)
-                                .disabled(llmBaseURLDraft.isEmpty && llmAPIKeyDraft.isEmpty)
-                        }
-                        TextField("Base URL (e.g. http://localhost:11434/v1 or local://mlx)", text: $llmBaseURLDraft)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(.body, design: .monospaced))
-                            .focused($isEditingLLMBaseURL)
-                            .onSubmit { commitLLMBaseURL() }
-                            .onChange(of: isEditingLLMBaseURL) { editing in
-                                if !editing { commitLLMBaseURL() }
-                            }
-                        SecureField("API key (\"ollama\" for local, empty for bundled Gemma)", text: $llmAPIKeyDraft)
-                            .textFieldStyle(.roundedBorder)
-                            .focused($isEditingLLMAPIKey)
-                            .onSubmit { commitLLMAPIKey() }
-                            .onChange(of: isEditingLLMAPIKey) { editing in
-                                if !editing { commitLLMAPIKey() }
-                            }
-
-                        if isUsingLocalLLM {
-                            HStack {
-                                Text("Model:")
-                                    .font(.caption)
-                                Picker("", selection: $localLLMChoice) {
-                                    ForEach(LocalLLMModelChoice.allCases) { choice in
-                                        Text(choice.displayName).tag(choice)
-                                    }
-                                }
-                                .labelsHidden()
-                                .onChange(of: localLLMChoice) { newValue in
-                                    applyLocalLLMModelChoice(newValue)
-                                }
-                            }
-                            localLLMDownloadStatusView(for: localLLMChoice.mlxModelId)
-                        }
-
-                        Text("LLM override also handles context inference.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    .foregroundStyle(.green)
+                    .labelStyle(.titleAndIcon)
+            } else {
+                Button("Download & load now") {
+                    Task.detached(priority: .userInitiated) {
+                        _ = try? await MLXModelContainerPool.shared.loadOrReturn(modelId: modelId)
                     }
                 }
-                .padding(.top, 6)
-            } label: {
-                Text("Advanced: split transcription and LLM providers")
-                    .font(.caption.weight(.semibold))
+                .font(.caption)
             }
         }
-        .onAppear {
-            transcriptionModelDraft = appState.transcriptionModel
-            postProcessingModelDraft = appState.postProcessingModel
-            postProcessingFallbackModelDraft = appState.postProcessingFallbackModel
-            contextModelDraft = appState.contextModel
-            transcriptionBaseURLDraft = appState.transcriptionBaseURL
-            transcriptionAPIKeyDraft = appState.transcriptionAPIKey
-            llmBaseURLDraft = appState.llmBaseURL
-            llmAPIKeyDraft = appState.llmAPIKey
-            overridesExpanded = !(appState.transcriptionBaseURL.isEmpty
-                && appState.transcriptionAPIKey.isEmpty
-                && appState.llmBaseURL.isEmpty
-                && appState.llmAPIKey.isEmpty)
-            whisperKitChoice = WhisperKitModelChoice.fromSentinelBaseURL(appState.transcriptionBaseURL) ?? .default
-            transcriptionLanguage = TranscriptionLanguage.fromISO(appState.transcriptionLanguage)
-            localLLMChoice = LocalLLMModelChoice.fromSentinelBaseURL(appState.llmBaseURL) ?? .default
+        if isActive {
+            ProgressView(value: downloads.progressFraction)
+                .progressViewStyle(.linear)
         }
-        .onChange(of: appState.transcriptionModel) { value in
-            if !isEditingTranscriptionModel {
-                transcriptionModelDraft = value
-            }
-        }
-        .onChange(of: appState.postProcessingModel) { value in
-            if !isEditingPostProcessingModel {
-                postProcessingModelDraft = value
-            }
-        }
-        .onChange(of: appState.postProcessingFallbackModel) { value in
-            if !isEditingPostProcessingFallbackModel {
-                postProcessingFallbackModelDraft = value
-            }
-        }
-        .onChange(of: appState.contextModel) { value in
-            if !isEditingContextModel {
-                contextModelDraft = value
-            }
-        }
-        .onChange(of: appState.transcriptionBaseURL) { value in
-            if !isEditingTranscriptionBaseURL { transcriptionBaseURLDraft = value }
-            if let choice = WhisperKitModelChoice.fromSentinelBaseURL(value) {
-                whisperKitChoice = choice
-            }
-        }
-        .onChange(of: appState.transcriptionAPIKey) { value in
-            if !isEditingTranscriptionAPIKey { transcriptionAPIKeyDraft = value }
-        }
-        .onChange(of: appState.llmBaseURL) { value in
-            if !isEditingLLMBaseURL { llmBaseURLDraft = value }
-            if let choice = LocalLLMModelChoice.fromSentinelBaseURL(value) {
-                localLLMChoice = choice
-            }
-        }
-        .onChange(of: appState.llmAPIKey) { value in
-            if !isEditingLLMAPIKey { llmAPIKeyDraft = value }
+        if let error = downloads.errorMessage, downloads.currentModelId == nil {
+            Text(error)
+                .font(.caption)
+                .foregroundStyle(.red)
         }
     }
 }
@@ -657,14 +184,13 @@ struct GeneralSettingsView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.openURL) private var openURL
     @AppStorage("show_menu_bar_icon") private var showMenuBarIcon = true
-    @State private var apiKeyInput: String = ""
-    @State private var apiBaseURLInput: String = ""
-    @State private var advancedProviderSettingsExpanded = false
-    @State private var isValidatingKey = false
-    @State private var keyValidationError: String?
-    @State private var keyValidationSuccess = false
     @State private var customVocabularyInput: String = ""
     @State private var micPermissionGranted = false
+    @State private var whisperKitChoice: WhisperKitModelChoice = .default
+    @State private var localLLMChoice: LocalLLMModelChoice = .default
+    @State private var transcriptionLanguage: TranscriptionLanguage = .auto
+    @ObservedObject private var whisperKitDownloads = WhisperKitDownloadManager.shared
+    @ObservedObject private var llmDownloads = LLMDownloadManager.shared
     @StateObject private var githubCache = GitHubMetadataCache.shared
     @ObservedObject private var updateManager = UpdateManager.shared
     private let freeflowRepoURL = URL(string: "https://github.com/verdana86/geMMaFloW")!
@@ -795,8 +321,11 @@ struct GeneralSettingsView: View {
                 SettingsCard("Updates", icon: "arrow.triangle.2.circlepath") {
                     updatesSection
                 }
-                SettingsCard("API Key", icon: "key.fill") {
-                    apiKeySection
+                SettingsCard("Transcription Model", icon: "waveform") {
+                    transcriptionModelSection
+                }
+                SettingsCard("Post-Processing Model", icon: "sparkles") {
+                    postProcessingModelSection
                 }
                 SettingsCard("Dictation Shortcuts", icon: "keyboard.fill") {
                     hotkeySection
@@ -823,12 +352,23 @@ struct GeneralSettingsView: View {
             .padding(24)
         }
         .onAppear {
-            apiKeyInput = appState.apiKey
-            apiBaseURLInput = appState.apiBaseURL
             customVocabularyInput = appState.customVocabulary
+            whisperKitChoice = WhisperKitModelChoice.fromSentinelBaseURL(appState.transcriptionBaseURL) ?? .default
+            localLLMChoice = LocalLLMModelChoice.fromSentinelBaseURL(appState.llmBaseURL) ?? .default
+            transcriptionLanguage = TranscriptionLanguage.fromISO(appState.transcriptionLanguage)
             checkMicPermission()
             appState.refreshLaunchAtLoginStatus()
             Task { await githubCache.fetchIfNeeded() }
+        }
+        .onChange(of: appState.transcriptionBaseURL) { value in
+            if let choice = WhisperKitModelChoice.fromSentinelBaseURL(value) {
+                whisperKitChoice = choice
+            }
+        }
+        .onChange(of: appState.llmBaseURL) { value in
+            if let choice = LocalLLMModelChoice.fromSentinelBaseURL(value) {
+                localLLMChoice = choice
+            }
         }
     }
 
@@ -971,83 +511,64 @@ struct GeneralSettingsView: View {
         }
     }
 
-    // MARK: API Key
+    // MARK: Transcription Model
 
-    private var apiKeySection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("geMMaFloW uses the configured transcription model with your selected OpenAI-compatible provider.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 8) {
-                SecureField("Enter your Groq API key", text: $apiKeyInput)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.body, design: .monospaced))
-                    .disabled(isValidatingKey)
-                    .onChange(of: apiKeyInput) { _ in
-                        keyValidationError = nil
-                        keyValidationSuccess = false
+    private var transcriptionModelSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Model")
+                    .font(.caption.weight(.semibold))
+                Picker("Model", selection: $whisperKitChoice) {
+                    ForEach(WhisperKitModelChoice.allCases) { choice in
+                        Text(choice.displayName).tag(choice)
                     }
-
-                Button(isValidatingKey ? "Validating..." : "Save") {
-                    validateAndSaveKey()
                 }
-                .disabled(apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isValidatingKey)
+                .labelsHidden()
+                .onChange(of: whisperKitChoice) { newValue in
+                    appState.transcriptionBaseURL = newValue.sentinelBaseURL
+                }
+                whisperKitDownloadStatus(for: whisperKitChoice.whisperKitIdentifier, downloads: whisperKitDownloads)
             }
 
-            if let error = keyValidationError {
-                Label(error, systemImage: "xmark.circle.fill")
-                    .foregroundStyle(.red)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Language")
+                    .font(.caption.weight(.semibold))
+                Picker("Language", selection: $transcriptionLanguage) {
+                    ForEach(TranscriptionLanguage.allCases) { language in
+                        Text(language.displayName).tag(language)
+                    }
+                }
+                .labelsHidden()
+                .onChange(of: transcriptionLanguage) { newValue in
+                    guard appState.transcriptionLanguage != newValue.isoCode else { return }
+                    appState.transcriptionLanguage = newValue.isoCode
+                }
+                Text("Auto-detect works but can be unreliable on short clips — pick a specific language to lock it.")
                     .font(.caption)
-            } else if keyValidationSuccess {
-                Label("API key saved", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-
-            DisclosureGroup(isExpanded: $advancedProviderSettingsExpanded) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Divider()
-                    ProviderSettingsFields(
-                        apiBaseURLInput: $apiBaseURLInput,
-                        showsModelDescription: false
-                    )
-                }
-            } label: {
-                HStack {
-                    Text("Advanced Provider Settings")
-                    Spacer()
-                }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    advancedProviderSettingsExpanded.toggle()
-                }
-            }
-            .padding(.top, 4)
         }
     }
 
-    private func validateAndSaveKey() {
-        let key = apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        let baseURL = apiBaseURLInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        isValidatingKey = true
-        keyValidationError = nil
-        keyValidationSuccess = false
+    // MARK: Post-Processing Model
 
-        Task {
-            let valid = await TranscriptionService.validateAPIKey(
-                key,
-                baseURL: baseURL.isEmpty ? AppState.defaultAPIBaseURL : baseURL
-            )
-            await MainActor.run {
-                isValidatingKey = false
-                if valid {
-                    appState.apiKey = key
-                    keyValidationSuccess = true
-                } else {
-                    keyValidationError = "Validation failed. Please check your API key and provider settings, then try again."
+    private var postProcessingModelSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Model")
+                .font(.caption.weight(.semibold))
+            Picker("Model", selection: $localLLMChoice) {
+                ForEach(LocalLLMModelChoice.allCases) { choice in
+                    Text(choice.displayName).tag(choice)
                 }
             }
+            .labelsHidden()
+            .onChange(of: localLLMChoice) { newValue in
+                appState.llmBaseURL = newValue.sentinelBaseURL
+            }
+            localLLMDownloadStatus(for: localLLMChoice.mlxModelId, downloads: llmDownloads)
+            Text("Used for transcript cleanup, Edit Mode transforms, and screen-context inference.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -1345,23 +866,6 @@ struct MicrophoneOptionRow: View {
 
 struct PromptsSettingsView: View {
     @EnvironmentObject var appState: AppState
-    @State private var customSystemPromptInput: String = ""
-    @State private var customContextPromptInput: String = ""
-    @State private var showDefaultSystemPrompt = false
-    @State private var showDefaultContextPrompt = false
-
-    // System prompt test state
-    @State private var systemTestInput: String = "Um, so I was like, thinking we should uh, refactor the authentication module, you know?"
-    @State private var systemTestRunning = false
-    @State private var systemTestOutput: String? = nil
-    @State private var systemTestError: String? = nil
-    @State private var systemTestPrompt: String? = nil
-
-    // Context prompt test state
-    @State private var contextTestRunning = false
-    @State private var contextTestOutput: String? = nil
-    @State private var contextTestError: String? = nil
-    @State private var contextTestPrompt: String? = nil
 
     var body: some View {
         ScrollView {
@@ -1375,438 +879,39 @@ struct PromptsSettingsView: View {
             }
             .padding(24)
         }
-        .onAppear {
-            customSystemPromptInput = appState.customSystemPrompt.isEmpty
-                ? PostProcessingService.defaultSystemPrompt
-                : appState.customSystemPrompt
-            customContextPromptInput = appState.customContextPrompt.isEmpty
-                ? AppContextService.defaultContextPrompt
-                : appState.customContextPrompt
-        }
     }
-
-    // MARK: System Prompt
 
     private var systemPromptSection: some View {
-        let isCustom = !appState.customSystemPrompt.isEmpty
-        let hasNewerDefault = isCustom
-            && !appState.customSystemPromptLastModified.isEmpty
-            && appState.customSystemPromptLastModified < PostProcessingService.defaultSystemPromptDate
-
-        return VStack(alignment: .leading, spacing: 10) {
-            Text("Controls how raw transcriptions are cleaned up.")
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Optimized for the bundled Gemma 4B model — not editable.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            if hasNewerDefault {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .foregroundStyle(.blue)
-                    Text("A newer default prompt is available.")
-                        .font(.caption.weight(.semibold))
-                    Spacer()
-                    Button("View Default") {
-                        showDefaultSystemPrompt.toggle()
-                    }
-                    .font(.caption)
-                    Button("Switch to Default") {
-                        customSystemPromptInput = PostProcessingService.defaultSystemPrompt
-                        appState.customSystemPrompt = ""
-                        appState.customSystemPromptLastModified = ""
-                    }
-                    .font(.caption)
-                }
+            Text(PostProcessingService.localDictationSystemPrompt)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
                 .padding(10)
-                .background(Color.blue.opacity(0.1))
-                .cornerRadius(6)
-            }
-
-            if showDefaultSystemPrompt {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Default System Prompt")
-                            .font(.caption.weight(.semibold))
-                        Spacer()
-                        Button("Hide") {
-                            showDefaultSystemPrompt = false
-                        }
-                        .font(.caption)
-                    }
-                    Text(PostProcessingService.defaultSystemPrompt)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(nsColor: .controlBackgroundColor))
                 .cornerRadius(6)
-            }
-
-            TextEditor(text: $customSystemPromptInput)
-                .font(.system(.body, design: .monospaced))
-                .frame(minHeight: 120, maxHeight: 200)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-                )
-                .onChange(of: customSystemPromptInput) { newValue in
-                    let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let defaultTrimmed = PostProcessingService.defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if trimmed == defaultTrimmed || trimmed.isEmpty {
-                        if !appState.customSystemPrompt.isEmpty {
-                            appState.customSystemPrompt = ""
-                            appState.customSystemPromptLastModified = ""
-                        }
-                    } else {
-                        appState.customSystemPrompt = trimmed
-                        let today = iso8601DayFormatter.string(from: Date())
-                        if appState.customSystemPromptLastModified != today {
-                            appState.customSystemPromptLastModified = today
-                        }
-                    }
-                }
-
-            HStack {
-                if isCustom {
-                    Label("Using custom prompt", systemImage: "pencil")
-                        .font(.caption)
-                        .foregroundStyle(.blue)
-                } else {
-                    Label("Using default", systemImage: "checkmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if isCustom {
-                    Button("Reset to Default") {
-                        customSystemPromptInput = PostProcessingService.defaultSystemPrompt
-                        appState.customSystemPrompt = ""
-                        appState.customSystemPromptLastModified = ""
-                    }
-                    .font(.caption)
-                }
-            }
-
-            Divider()
-
-            // Test section
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Test System Prompt")
-                    .font(.caption.weight(.semibold))
-                Text("Enter sample text to see how the current prompt cleans it up.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                TextEditor(text: $systemTestInput)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(minHeight: 60, maxHeight: 100)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-                    )
-
-                Button {
-                    runSystemPromptTest()
-                } label: {
-                    HStack(spacing: 6) {
-                        if systemTestRunning {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("Running...")
-                        } else {
-                            Image(systemName: "play.fill")
-                            Text("Test System Prompt")
-                        }
-                    }
-                }
-                .disabled(systemTestRunning || appState.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || systemTestInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                if appState.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Label("API key required to test", systemImage: "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-
-                if let error = systemTestError {
-                    Label(error, systemImage: "xmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-
-                if let output = systemTestOutput {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Result:")
-                            .font(.caption.weight(.semibold))
-                        Text(output.isEmpty ? "(empty — no output)" : output)
-                            .font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled)
-                            .padding(8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.green.opacity(0.08))
-                            .cornerRadius(6)
-                    }
-                }
-
-                if let prompt = systemTestPrompt {
-                    DisclosureGroup("Full prompt sent") {
-                        Text(prompt)
-                            .font(.system(.caption2, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-            }
         }
     }
-
-    private func runSystemPromptTest() {
-        systemTestRunning = true
-        systemTestOutput = nil
-        systemTestError = nil
-        systemTestPrompt = nil
-
-        let service = PostProcessingService(
-            apiKey: appState.apiKey,
-            baseURL: appState.apiBaseURL,
-            preferredModel: appState.postProcessingModel,
-            preferredFallbackModel: appState.postProcessingFallbackModel
-        )
-        let input = systemTestInput
-        let customPrompt = appState.customSystemPrompt
-        let vocabulary = appState.customVocabulary
-
-        let context = AppContext(
-            appName: "geMMaFloW Settings",
-            bundleIdentifier: "com.verdana86.gemmaflow",
-            windowTitle: "System Prompt Test",
-            selectedText: nil,
-            currentActivity: "User is testing the system prompt in geMMaFloW settings.",
-            contextPrompt: nil,
-            screenshotDataURL: nil,
-            screenshotMimeType: nil,
-            screenshotError: nil
-        )
-
-        Task {
-            do {
-                let result = try await service.postProcess(
-                    transcript: input,
-                    context: context,
-                    customVocabulary: vocabulary,
-                    customSystemPrompt: customPrompt
-                )
-                await MainActor.run {
-                    systemTestOutput = result.transcript
-                    systemTestPrompt = result.prompt
-                    systemTestRunning = false
-                }
-            } catch {
-                await MainActor.run {
-                    systemTestError = error.localizedDescription
-                    systemTestRunning = false
-                }
-            }
-        }
-    }
-
-    // MARK: Context Prompt
 
     private var contextPromptSection: some View {
-        let isCustom = !appState.customContextPrompt.isEmpty
-        let hasNewerDefault = isCustom
-            && !appState.customContextPromptLastModified.isEmpty
-            && appState.customContextPromptLastModified < AppContextService.defaultContextPromptDate
-
-        return VStack(alignment: .leading, spacing: 10) {
-            Text("Controls how geMMaFloW infers your current activity from app metadata and screenshots.")
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Tells the context model how to summarise the frontmost app's screenshot + metadata into the activity hint passed to post-processing.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            if hasNewerDefault {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .foregroundStyle(.blue)
-                    Text("A newer default prompt is available.")
-                        .font(.caption.weight(.semibold))
-                    Spacer()
-                    Button("View Default") {
-                        showDefaultContextPrompt.toggle()
-                    }
-                    .font(.caption)
-                    Button("Switch to Default") {
-                        customContextPromptInput = AppContextService.defaultContextPrompt
-                        appState.customContextPrompt = ""
-                        appState.customContextPromptLastModified = ""
-                    }
-                    .font(.caption)
-                }
+            Text(AppContextService.defaultContextPrompt)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
                 .padding(10)
-                .background(Color.blue.opacity(0.1))
-                .cornerRadius(6)
-            }
-
-            if showDefaultContextPrompt {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Default Context Prompt")
-                            .font(.caption.weight(.semibold))
-                        Spacer()
-                        Button("Hide") {
-                            showDefaultContextPrompt = false
-                        }
-                        .font(.caption)
-                    }
-                    Text(AppContextService.defaultContextPrompt)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(nsColor: .controlBackgroundColor))
                 .cornerRadius(6)
-            }
-
-            TextEditor(text: $customContextPromptInput)
-                .font(.system(.body, design: .monospaced))
-                .frame(minHeight: 120, maxHeight: 200)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-                )
-                .onChange(of: customContextPromptInput) { newValue in
-                    let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let defaultTrimmed = AppContextService.defaultContextPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if trimmed == defaultTrimmed || trimmed.isEmpty {
-                        if !appState.customContextPrompt.isEmpty {
-                            appState.customContextPrompt = ""
-                            appState.customContextPromptLastModified = ""
-                        }
-                    } else {
-                        appState.customContextPrompt = trimmed
-                        let today = iso8601DayFormatter.string(from: Date())
-                        if appState.customContextPromptLastModified != today {
-                            appState.customContextPromptLastModified = today
-                        }
-                    }
-                }
-
-            HStack {
-                if isCustom {
-                    Label("Using custom prompt", systemImage: "pencil")
-                        .font(.caption)
-                        .foregroundStyle(.blue)
-                } else {
-                    Label("Using default", systemImage: "checkmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if isCustom {
-                    Button("Reset to Default") {
-                        customContextPromptInput = AppContextService.defaultContextPrompt
-                        appState.customContextPrompt = ""
-                        appState.customContextPromptLastModified = ""
-                    }
-                    .font(.caption)
-                }
-            }
-
-            Divider()
-
-            // Test section
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Test Context Prompt")
-                    .font(.caption.weight(.semibold))
-                Text("Captures a screenshot and metadata from the frontmost app, then runs the context prompt to infer activity.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Button {
-                    runContextPromptTest()
-                } label: {
-                    HStack(spacing: 6) {
-                        if contextTestRunning {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("Running...")
-                        } else {
-                            Image(systemName: "play.fill")
-                            Text("Test Context Prompt")
-                        }
-                    }
-                }
-                .disabled(contextTestRunning || appState.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                if appState.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Label("API key required to test", systemImage: "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-
-                if let error = contextTestError {
-                    Label(error, systemImage: "xmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-
-                if let output = contextTestOutput {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Result:")
-                            .font(.caption.weight(.semibold))
-                        Text(output.isEmpty ? "(empty — no output)" : output)
-                            .font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled)
-                            .padding(8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.green.opacity(0.08))
-                            .cornerRadius(6)
-                    }
-                }
-
-                if let prompt = contextTestPrompt {
-                    DisclosureGroup("Full prompt sent") {
-                        Text(prompt)
-                            .font(.system(.caption2, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-            }
         }
     }
-
-    private func runContextPromptTest() {
-        contextTestRunning = true
-        contextTestOutput = nil
-        contextTestError = nil
-        contextTestPrompt = nil
-
-        let service = AppContextService(
-            apiKey: appState.apiKey,
-            baseURL: appState.apiBaseURL,
-            customContextPrompt: appState.customContextPrompt,
-            contextModel: appState.contextModel
-        )
-
-        Task {
-            let context = await service.collectContext()
-            await MainActor.run {
-                if let prompt = context.contextPrompt {
-                    contextTestOutput = context.contextSummary
-                    contextTestPrompt = prompt
-                } else {
-                    contextTestError = "Context inference returned no result. This may be a permissions issue or the API could not be reached."
-                    contextTestOutput = context.contextSummary
-                }
-                contextTestRunning = false
-            }
-        }
-    }
-
 }
 
 // MARK: - Run Log

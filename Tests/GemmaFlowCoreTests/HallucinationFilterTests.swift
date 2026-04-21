@@ -1,5 +1,5 @@
 import Testing
-@testable import FreeFlowCore
+@testable import GemmaFlowCore
 
 @Suite("Hallucination filter — Whisper short-phrase silence detection")
 struct HallucinationFilterTests {

@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import FreeFlowCore
+@testable import GemmaFlowCore
 
 @Suite("TranscriptionBackendKind — routing by URL sentinel")
 struct TranscriptionBackendKindTests {

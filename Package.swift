@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "FreeFlow",
+    name: "GemmaFlow",
     platforms: [.macOS(.v14)],
     dependencies: [
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.18.0"),
@@ -12,7 +12,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "FreeFlowCore",
+            name: "GemmaFlowCore",
             dependencies: [
                 .product(name: "WhisperKit", package: "WhisperKit"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
@@ -24,9 +24,9 @@ let package = Package(
             path: "Sources"
         ),
         .testTarget(
-            name: "FreeFlowCoreTests",
-            dependencies: ["FreeFlowCore"],
-            path: "Tests/FreeFlowCoreTests"
+            name: "GemmaFlowCoreTests",
+            dependencies: ["GemmaFlowCore"],
+            path: "Tests/GemmaFlowCoreTests"
         )
     ]
 )

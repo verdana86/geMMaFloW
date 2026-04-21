@@ -11,7 +11,7 @@ APP_EXECUTABLE = $(MACOS_DIR)/$(APP_NAME)
 APP_EXECUTABLE_TARGET := $(subst $(space),\ ,$(APP_EXECUTABLE))
 
 SWIFT_CONFIG ?= release
-SWIFT_EXECUTABLE_NAME = FreeFlowCore
+SWIFT_EXECUTABLE_NAME = GemmaFlowCore
 
 SOURCES := $(wildcard Sources/*.swift) Package.swift
 RESOURCES = $(CONTENTS)/Resources
@@ -25,7 +25,7 @@ MLX_XCODEPROJ = .build/checkouts/mlx-swift/xcode/MLX.xcodeproj
 MLX_DERIVED_DATA = .build/mlx-xcode
 MLX_METALLIB = $(MLX_DERIVED_DATA)/Build/Products/Release/Cmlx.framework/Versions/A/Resources/default.metallib
 
-.PHONY: all clean run icon dmg codesign-dmg notarize test metallib
+.PHONY: all clean clean-user-state run icon dmg codesign-dmg notarize test metallib
 
 all: $(APP_EXECUTABLE_TARGET)
 
@@ -59,7 +59,7 @@ $(APP_EXECUTABLE_TARGET): $(SOURCES) Info.plist $(ICON_ICNS) $(MLX_METALLIB)
 	@cp $(ICON_ICNS) "$(RESOURCES)/"
 	@cp "$(MLX_METALLIB)" "$(MACOS_DIR)/mlx.metallib"
 	@cp "$(MLX_METALLIB)" "$(RESOURCES)/default.metallib"
-	@bash -c 'set -e; APP="$(APP_BUNDLE)"; find "$$APP" -name "._*" -delete 2>/dev/null || true; find "$$APP" -exec xattr -c {} + 2>/dev/null || true; xattr -c "$$APP" 2>/dev/null || true; sync; sleep 0.3; xattr -c "$$APP" 2>/dev/null || true; codesign --force --options runtime --deep --sign "$(CODESIGN_IDENTITY)" --entitlements FreeFlow.entitlements "$$APP"'
+	@bash -c 'set -e; APP="$(APP_BUNDLE)"; find "$$APP" -name "._*" -delete 2>/dev/null || true; find "$$APP" -exec xattr -c {} + 2>/dev/null || true; xattr -c "$$APP" 2>/dev/null || true; sync; sleep 0.3; xattr -c "$$APP" 2>/dev/null || true; codesign --force --options runtime --deep --sign "$(CODESIGN_IDENTITY)" --entitlements GemmaFlow.entitlements "$$APP"'
 	@echo "Built $(APP_BUNDLE)"
 
 icon: $(ICON_ICNS)
@@ -114,6 +114,29 @@ notarize:
 
 clean:
 	rm -rf $(BUILD_DIR) .build
+
+# Wipes everything the installed app persists outside the repo: the /Applications
+# bundle, user caches, downloaded WhisperKit + Gemma models, and the TCC grants
+# (Microphone / Accessibility / Screen Recording). Prompts before deleting so an
+# accidental invocation doesn't eat the model downloads (~2 GB).
+clean-user-state:
+	@echo "This will delete for bundle id '$(BUNDLE_ID)':"
+	@echo "  /Applications/$(APP_NAME).app"
+	@echo "  ~/Library/Caches/$(BUNDLE_ID)"
+	@echo "  ~/Library/Application Support/$(APP_NAME)"
+	@echo "  ~/.cache/huggingface/hub/models--argmaxinc--whisperkit-coreml"
+	@echo "  ~/.cache/huggingface/hub/models--mlx-community--gemma-*"
+	@echo "  TCC grants: Microphone, Accessibility, ScreenCapture"
+	@read -p "Continue? [y/N] " ans && [ "$$ans" = "y" ] || [ "$$ans" = "Y" ]
+	-rm -rf "/Applications/$(APP_NAME).app"
+	-rm -rf "$$HOME/Library/Caches/$(BUNDLE_ID)"
+	-rm -rf "$$HOME/Library/Application Support/$(APP_NAME)"
+	-rm -rf "$$HOME/.cache/huggingface/hub/models--argmaxinc--whisperkit-coreml"
+	-find "$$HOME/.cache/huggingface/hub" -maxdepth 1 -type d -name 'models--mlx-community--gemma*' -exec rm -rf {} + 2>/dev/null || true
+	-tccutil reset Microphone $(BUNDLE_ID) 2>/dev/null || true
+	-tccutil reset Accessibility $(BUNDLE_ID) 2>/dev/null || true
+	-tccutil reset ScreenCapture $(BUNDLE_ID) 2>/dev/null || true
+	@echo "Clean slate. Reinstall with: make && cp -R \"$(APP_BUNDLE)\" /Applications/"
 
 run: all
 	open "$(APP_BUNDLE)"

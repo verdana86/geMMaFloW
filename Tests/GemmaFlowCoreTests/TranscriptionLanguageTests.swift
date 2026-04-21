@@ -1,5 +1,5 @@
 import Testing
-@testable import FreeFlowCore
+@testable import GemmaFlowCore
 
 @Suite("TranscriptionLanguage — ISO code round-trip")
 struct TranscriptionLanguageTests {

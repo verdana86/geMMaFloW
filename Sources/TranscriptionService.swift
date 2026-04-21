@@ -1,5 +1,8 @@
 import AVFoundation
 import Foundation
+import os
+
+private let silenceLog = Logger(subsystem: "com.verdana86.gemmaflow", category: "Silence")
 
 /// Thin coordinator: picks a `TranscriptionBackend` based on the configured
 /// base URL, normalizes the audio once, then delegates. Preserves the
@@ -8,13 +11,12 @@ class TranscriptionService {
     private let backend: TranscriptionBackend
     private let uploadSampleRate = 16_000.0
     private let uploadChannelCount: AVAudioChannelCount = 1
+    private let silenceThreshold: Float = AudioSilenceDetector.defaultThreshold
 
     init(
-        apiKey: String = "",
         baseURL: String = "",
-        transcriptionModel: String = "whisper-large-v3",
         transcriptionLanguage: String? = nil
-    ) throws {
+    ) {
         let trimmedLanguage = transcriptionLanguage?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedLanguage: String? = (trimmedLanguage?.isEmpty == false) ? trimmedLanguage : nil
 
@@ -32,17 +34,6 @@ class TranscriptionService {
             modelVariant: variant,
             language: resolvedLanguage
         )
-        _ = apiKey  // kept for API compat; unused in local-only path
-        _ = transcriptionModel
-    }
-
-    /// Local-only backend needs no API key validation. Kept for API
-    /// compatibility with call sites that haven't been updated.
-    static func validateAPIKey(
-        _ key: String,
-        baseURL: String = ""
-    ) async -> Bool {
-        return true
     }
 
     func transcribe(fileURL: URL) async throws -> String {
@@ -50,6 +41,16 @@ class TranscriptionService {
 
         let preparedAudio = try prepareAudioForUpload(from: fileURL)
         defer { preparedAudio.cleanup() }
+
+        // Skip transcription outright on silent clips — Whisper hallucinates
+        // confident-looking text on pure silence (see AudioSilenceDetector).
+        if let rms = try? AudioSilenceDetector.rms(at: preparedAudio.fileURL) {
+            if rms < silenceThreshold {
+                silenceLog.info("Skipping transcription: RMS \(rms, privacy: .public) < threshold \(self.silenceThreshold, privacy: .public)")
+                return ""
+            }
+            silenceLog.debug("RMS \(rms, privacy: .public) above threshold — transcribing")
+        }
 
         return try await backend.transcribe(fileURL: preparedAudio.fileURL)
     }
@@ -82,21 +83,15 @@ class TranscriptionService {
 
 enum TranscriptionError: LocalizedError {
     case invalidBaseURL(String)
-    case uploadFailed(String)
-    case submissionFailed(String)
     case transcriptionFailed(String)
     case transcriptionTimedOut(TimeInterval)
-    case pollFailed(String)
     case audioPreparationFailed(String)
 
     var errorDescription: String? {
         switch self {
         case .invalidBaseURL(let msg): return "Invalid provider URL: \(msg)"
-        case .uploadFailed(let msg): return "Upload failed: \(msg)"
-        case .submissionFailed(let msg): return "Submission failed: \(msg)"
         case .transcriptionTimedOut(let seconds): return "Transcription timed out after \(Int(seconds))s"
         case .transcriptionFailed(let msg): return "Transcription failed: \(msg)"
-        case .pollFailed(let msg): return "Polling failed: \(msg)"
         case .audioPreparationFailed(let msg): return "Audio preparation failed: \(msg)"
         }
     }

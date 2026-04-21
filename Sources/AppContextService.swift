@@ -45,16 +45,17 @@ Return only two sentences, no labels, no markdown, no extra commentary.
     private let contextRequestTimeoutSeconds: TimeInterval = 20
 
     init(
-        apiKey: String,
-        baseURL: String = "https://api.groq.com/openai/v1",
         customContextPrompt: String = "",
-        contextModel: String = "meta-llama/llama-4-scout-17b-16e-instruct"
+        contextModel: String = ""
     ) {
-        self.apiKey = apiKey
-        self.baseURL = baseURL
+        // Local-only: LLM-based context inference is disabled (no cloud
+        // endpoint configured). Collected context still exposes frontmost
+        // app name, window title, and selected text — just no screenshot-
+        // driven summary.
+        self.apiKey = ""
+        self.baseURL = ""
         self.customContextPrompt = customContextPrompt
-        let trimmedModel = contextModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.contextModel = trimmedModel.isEmpty ? "meta-llama/llama-4-scout-17b-16e-instruct" : trimmedModel
+        self.contextModel = contextModel
     }
 
     func collectSelectionSnapshot() -> AppSelectionSnapshot {

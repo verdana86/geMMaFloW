@@ -1,5 +1,5 @@
 import Testing
-@testable import FreeFlowCore
+@testable import GemmaFlowCore
 
 @Suite("WhisperKitModelChoice — UI preset ↔ sentinel URL round-trip")
 struct WhisperKitModelChoiceTests {

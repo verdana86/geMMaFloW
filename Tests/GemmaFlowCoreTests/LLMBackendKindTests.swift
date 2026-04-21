@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import FreeFlowCore
+@testable import GemmaFlowCore
 
 @Suite("LLMBackendKind — routing by URL sentinel")
 struct LLMBackendKindTests {

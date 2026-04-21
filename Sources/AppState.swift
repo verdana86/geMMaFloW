@@ -163,26 +163,16 @@ private enum SessionIntent {
 }
 
 final class AppState: ObservableObject, @unchecked Sendable {
-    private let apiKeyStorageKey = "groq_api_key"
-    private let apiBaseURLStorageKey = "api_base_url"
     private let transcriptionBaseURLStorageKey = "transcription_base_url"
     private let llmBaseURLStorageKey = "llm_base_url"
-    private let transcriptionAPIKeyStorageKey = "transcription_api_key"
-    private let llmAPIKeyStorageKey = "llm_api_key"
-    private let transcriptionModelStorageKey = "transcription_model"
     private let transcriptionLanguageStorageKey = "transcription_language"
-    private let postProcessingModelStorageKey = "post_processing_model"
-    private let postProcessingFallbackModelStorageKey = "post_processing_fallback_model"
-    private let contextModelStorageKey = "context_model"
     private let holdShortcutStorageKey = "hold_shortcut"
     private let toggleShortcutStorageKey = "toggle_shortcut"
     private let savedHoldCustomShortcutStorageKey = "saved_hold_custom_shortcut"
     private let savedToggleCustomShortcutStorageKey = "saved_toggle_custom_shortcut"
     private let customVocabularyStorageKey = "custom_vocabulary"
     private let selectedMicrophoneStorageKey = "selected_microphone_id"
-    private let customSystemPromptStorageKey = "custom_system_prompt"
     private let customContextPromptStorageKey = "custom_context_prompt"
-    private let customSystemPromptLastModifiedStorageKey = "custom_system_prompt_last_modified"
     private let customContextPromptLastModifiedStorageKey = "custom_context_prompt_last_modified"
     private let shortcutStartDelayStorageKey = "shortcut_start_delay"
     private let preserveClipboardStorageKey = "preserve_clipboard"
@@ -195,103 +185,28 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private let transcribingIndicatorDelay: TimeInterval = 0.25
     private let clipboardRestoreDelay: TimeInterval = 0.15
     let maxPipelineHistoryCount = 20
-    static let defaultTranscriptionModel = "whisper-large-v3"
-    static let defaultPostProcessingModel = "openai/gpt-oss-20b"
-    static let defaultPostProcessingFallbackModel = "meta-llama/llama-4-scout-17b-16e-instruct"
-    static let defaultContextModel = "meta-llama/llama-4-scout-17b-16e-instruct"
-
     @Published var hasCompletedSetup: Bool {
         didSet {
             UserDefaults.standard.set(hasCompletedSetup, forKey: "hasCompletedSetup")
         }
     }
 
-    @Published var apiKey: String {
-        didSet {
-            persistAPIKey(apiKey)
-            rebuildContextService()
-        }
-    }
-
-    @Published var apiBaseURL: String {
-        didSet {
-            persistAPIBaseURL(apiBaseURL)
-            rebuildContextService()
-        }
-    }
-
     @Published var transcriptionBaseURL: String {
         didSet {
-            persistOptionalEndpoint(transcriptionBaseURL, account: transcriptionBaseURLStorageKey)
+            UserDefaults.standard.set(transcriptionBaseURL, forKey: transcriptionBaseURLStorageKey)
         }
     }
 
     @Published var llmBaseURL: String {
         didSet {
-            persistOptionalEndpoint(llmBaseURL, account: llmBaseURLStorageKey)
+            UserDefaults.standard.set(llmBaseURL, forKey: llmBaseURLStorageKey)
             rebuildContextService()
-        }
-    }
-
-    @Published var transcriptionAPIKey: String {
-        didSet {
-            persistOptionalEndpoint(transcriptionAPIKey, account: transcriptionAPIKeyStorageKey)
-        }
-    }
-
-    @Published var llmAPIKey: String {
-        didSet {
-            persistOptionalEndpoint(llmAPIKey, account: llmAPIKeyStorageKey)
-            rebuildContextService()
-        }
-    }
-
-    /// Effective URL used by TranscriptionService — falls back to legacy
-    /// `apiBaseURL` when the transcription-specific override is empty.
-    var effectiveTranscriptionBaseURL: String {
-        Self.resolveEndpoint(specific: transcriptionBaseURL, legacy: apiBaseURL)
-    }
-
-    var effectiveLLMBaseURL: String {
-        Self.resolveEndpoint(specific: llmBaseURL, legacy: apiBaseURL)
-    }
-
-    var effectiveTranscriptionAPIKey: String {
-        Self.resolveEndpoint(specific: transcriptionAPIKey, legacy: apiKey)
-    }
-
-    var effectiveLLMAPIKey: String {
-        Self.resolveEndpoint(specific: llmAPIKey, legacy: apiKey)
-    }
-
-    @Published var transcriptionModel: String {
-        didSet {
-            UserDefaults.standard.set(transcriptionModel, forKey: transcriptionModelStorageKey)
         }
     }
 
     @Published var transcriptionLanguage: String {
         didSet {
             UserDefaults.standard.set(transcriptionLanguage, forKey: transcriptionLanguageStorageKey)
-        }
-    }
-
-    @Published var postProcessingModel: String {
-        didSet {
-            UserDefaults.standard.set(postProcessingModel, forKey: postProcessingModelStorageKey)
-        }
-    }
-
-    @Published var postProcessingFallbackModel: String {
-        didSet {
-            UserDefaults.standard.set(postProcessingFallbackModel, forKey: postProcessingFallbackModelStorageKey)
-        }
-    }
-
-    @Published var contextModel: String {
-        didSet {
-            UserDefaults.standard.set(contextModel, forKey: contextModelStorageKey)
-            rebuildContextService()
         }
     }
 
@@ -345,22 +260,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
-    @Published var customSystemPrompt: String {
-        didSet {
-            UserDefaults.standard.set(customSystemPrompt, forKey: customSystemPromptStorageKey)
-        }
-    }
-
     @Published var customContextPrompt: String {
         didSet {
             UserDefaults.standard.set(customContextPrompt, forKey: customContextPromptStorageKey)
             rebuildContextService()
-        }
-    }
-
-    @Published var customSystemPromptLastModified: String {
-        didSet {
-            UserDefaults.standard.set(customSystemPromptLastModified, forKey: customSystemPromptLastModifiedStorageKey)
         }
     }
 
@@ -466,25 +369,11 @@ final class AppState: ObservableObject, @unchecked Sendable {
     init() {
         UserDefaults.standard.removeObject(forKey: "force_http2_transcription")
         let hasCompletedSetup = UserDefaults.standard.bool(forKey: "hasCompletedSetup")
-        let apiKey = Self.loadStoredAPIKey(account: apiKeyStorageKey)
-        let apiBaseURL = Self.loadStoredAPIBaseURL(account: "api_base_url")
-        let transcriptionBaseURL = Self.loadStoredOptionalEndpoint(
-            account: transcriptionBaseURLStorageKey,
-            ifEmpty: Self.defaultTranscriptionBaseURL
-        )
-        let llmBaseURL = Self.loadStoredOptionalEndpoint(
-            account: llmBaseURLStorageKey,
-            ifEmpty: Self.defaultLLMBaseURL
-        )
-        let transcriptionAPIKey = Self.loadStoredOptionalEndpoint(account: transcriptionAPIKeyStorageKey)
-        let llmAPIKey = Self.loadStoredOptionalEndpoint(account: llmAPIKeyStorageKey)
-        let initialLLMBaseURL = Self.resolveEndpoint(specific: llmBaseURL, legacy: apiBaseURL)
-        let initialLLMAPIKey = Self.resolveEndpoint(specific: llmAPIKey, legacy: apiKey)
-        let transcriptionModel = UserDefaults.standard.string(forKey: transcriptionModelStorageKey) ?? Self.defaultTranscriptionModel
+        let transcriptionBaseURL = UserDefaults.standard.string(forKey: transcriptionBaseURLStorageKey)
+            ?? Self.defaultTranscriptionBaseURL
+        let llmBaseURL = UserDefaults.standard.string(forKey: llmBaseURLStorageKey)
+            ?? Self.defaultLLMBaseURL
         let transcriptionLanguage = UserDefaults.standard.string(forKey: transcriptionLanguageStorageKey) ?? ""
-        let postProcessingModel = UserDefaults.standard.string(forKey: postProcessingModelStorageKey) ?? Self.defaultPostProcessingModel
-        let postProcessingFallbackModel = UserDefaults.standard.string(forKey: postProcessingFallbackModelStorageKey) ?? Self.defaultPostProcessingFallbackModel
-        let contextModel = UserDefaults.standard.string(forKey: contextModelStorageKey) ?? Self.defaultContextModel
         let shortcuts = Self.loadShortcutConfiguration(
             holdKey: holdShortcutStorageKey,
             toggleKey: toggleShortcutStorageKey
@@ -494,9 +383,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let savedToggleCustomShortcut = Self.loadShortcut(forKey: savedToggleCustomShortcutStorageKey)
             ?? (shortcuts.toggle.isCustom ? shortcuts.toggle : nil)
         let customVocabulary = UserDefaults.standard.string(forKey: customVocabularyStorageKey) ?? ""
-        let customSystemPrompt = UserDefaults.standard.string(forKey: customSystemPromptStorageKey) ?? ""
         let customContextPrompt = UserDefaults.standard.string(forKey: customContextPromptStorageKey) ?? ""
-        let customSystemPromptLastModified = UserDefaults.standard.string(forKey: customSystemPromptLastModifiedStorageKey) ?? ""
         let customContextPromptLastModified = UserDefaults.standard.string(forKey: customContextPromptLastModifiedStorageKey) ?? ""
         let shortcutStartDelay = max(0, UserDefaults.standard.double(forKey: shortcutStartDelayStorageKey))
         let isCommandModeEnabled = UserDefaults.standard.object(forKey: commandModeEnabledStorageKey) == nil
@@ -541,23 +428,12 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let selectedMicrophoneID = UserDefaults.standard.string(forKey: selectedMicrophoneStorageKey) ?? "default"
 
         self.contextService = AppContextService(
-            apiKey: initialLLMAPIKey,
-            baseURL: initialLLMBaseURL,
-            customContextPrompt: customContextPrompt,
-            contextModel: contextModel
+            customContextPrompt: customContextPrompt
         )
         self.hasCompletedSetup = hasCompletedSetup
-        self.apiKey = apiKey
-        self.apiBaseURL = apiBaseURL
         self.transcriptionBaseURL = transcriptionBaseURL
         self.llmBaseURL = llmBaseURL
-        self.transcriptionAPIKey = transcriptionAPIKey
-        self.llmAPIKey = llmAPIKey
-        self.transcriptionModel = transcriptionModel
         self.transcriptionLanguage = transcriptionLanguage
-        self.postProcessingModel = postProcessingModel
-        self.postProcessingFallbackModel = postProcessingFallbackModel
-        self.contextModel = contextModel
         self.holdShortcut = shortcuts.hold
         self.toggleShortcut = shortcuts.toggle
         self.savedHoldCustomShortcut = savedHoldCustomShortcut
@@ -566,9 +442,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         self.commandModeStyle = commandModeStyle
         self.commandModeManualModifier = commandModeManualModifier
         self.customVocabulary = customVocabulary
-        self.customSystemPrompt = customSystemPrompt
         self.customContextPrompt = customContextPrompt
-        self.customSystemPromptLastModified = customSystemPromptLastModified
         self.customContextPromptLastModified = customContextPromptLastModified
         self.shortcutStartDelay = shortcutStartDelay
         self.preserveClipboard = preserveClipboard
@@ -611,71 +485,15 @@ final class AppState: ObservableObject, @unchecked Sendable {
         audioDeviceObservers.removeAll()
     }
 
-    private static func loadStoredAPIKey(account: String) -> String {
-        if let storedKey = AppSettingsStorage.load(account: account), !storedKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return storedKey
-        }
-        return ""
-    }
-
-    private func persistAPIKey(_ value: String) {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            AppSettingsStorage.delete(account: apiKeyStorageKey)
-        } else {
-            AppSettingsStorage.save(trimmed, account: apiKeyStorageKey)
-        }
-    }
-
-    /// Persist an opt-in transcription/LLM override. Empty means "follow the
-    /// legacy apiBaseURL/apiKey" — delete the stored value so resolveEndpoint
-    /// falls back.
-    private func persistOptionalEndpoint(_ value: String, account: String) {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            AppSettingsStorage.delete(account: account)
-        } else {
-            AppSettingsStorage.save(trimmed, account: account)
-        }
-    }
-
-    private static func loadStoredOptionalEndpoint(account: String, ifEmpty: String = "") -> String {
-        guard let stored = AppSettingsStorage.load(account: account) else { return ifEmpty }
-        let trimmed = stored.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? ifEmpty : trimmed
-    }
-
     /// Default transcription/LLM sentinels for fresh installs. Local-only —
     /// geMMaFloW ships without any cloud provider wiring.
     static let defaultTranscriptionBaseURL = WhisperKitModelChoice.default.sentinelBaseURL
     static let defaultLLMBaseURL = LocalLLMModelChoice.default.sentinelBaseURL
 
-    /// Legacy fallback URL. Kept as a named constant because some older code
-    /// paths read `apiBaseURL` when the per-service overrides are empty; on
-    /// fresh installs this mirrors the transcription sentinel so the
-    /// validation step in the onboarding passes without a cloud key.
-    static let defaultAPIBaseURL = defaultTranscriptionBaseURL
-
-    /// Resolves an endpoint value by falling back to a legacy source when the
-    /// specific value is empty or whitespace-only. Used by Step 1 split to keep
-    /// a single legacy `apiBaseURL`/`apiKey` working while users opt in to
-    /// separate transcription and LLM providers.
-    static func resolveEndpoint(specific: String, legacy: String) -> String {
-        let trimmed = specific.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? legacy : trimmed
-    }
-
     private struct StoredShortcutConfiguration {
         let hold: ShortcutBinding
         let toggle: ShortcutBinding
         let didMigrateLegacyValue: Bool
-    }
-
-    private static func loadStoredAPIBaseURL(account: String) -> String {
-        if let stored = AppSettingsStorage.load(account: account), !stored.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return stored
-        }
-        return defaultAPIBaseURL
     }
 
     private static func loadShortcutConfiguration(holdKey: String, toggleKey: String) -> StoredShortcutConfiguration {
@@ -699,21 +517,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
         return try? JSONDecoder().decode(ShortcutBinding.self, from: data)
     }
 
-    private func persistAPIBaseURL(_ value: String) {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty || trimmed == Self.defaultAPIBaseURL {
-            AppSettingsStorage.delete(account: apiBaseURLStorageKey)
-        } else {
-            AppSettingsStorage.save(trimmed, account: apiBaseURLStorageKey)
-        }
-    }
-
     private func rebuildContextService() {
         contextService = AppContextService(
-            apiKey: effectiveLLMAPIKey,
-            baseURL: effectiveLLMBaseURL,
-            customContextPrompt: customContextPrompt,
-            contextModel: contextModel
+            customContextPrompt: customContextPrompt
         )
     }
 
@@ -810,21 +616,13 @@ final class AppState: ObservableObject, @unchecked Sendable {
             screenshotError: nil
         )
 
-        let postProcessingService = PostProcessingService(
-            apiKey: effectiveLLMAPIKey,
-            baseURL: effectiveLLMBaseURL,
-            preferredModel: postProcessingModel,
-            preferredFallbackModel: postProcessingFallbackModel
-        )
+        let postProcessingService = PostProcessingService(baseURL: llmBaseURL)
         let capturedCustomVocabulary = customVocabulary
-        let capturedCustomSystemPrompt = customSystemPrompt
 
         Task {
             do {
-                let transcriptionService = try TranscriptionService(
-                    apiKey: effectiveTranscriptionAPIKey,
-                    baseURL: effectiveTranscriptionBaseURL,
-                    transcriptionModel: transcriptionModel,
+                let transcriptionService = TranscriptionService(
+                    baseURL: transcriptionBaseURL,
                     transcriptionLanguage: transcriptionLanguage
                 )
                 let rawTranscript = try await transcriptionService.transcribe(fileURL: audioURL)
@@ -841,8 +639,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
                     intent: restoredIntent,
                     context: restoredContext,
                     postProcessingService: postProcessingService,
-                    customVocabulary: capturedCustomVocabulary,
-                    customSystemPrompt: capturedCustomSystemPrompt
+                    customVocabulary: capturedCustomVocabulary
                 )
                 finalTranscript = result.finalTranscript
                 processingStatus = result.outcome.statusMessage(isRetry: true)
@@ -909,8 +706,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
     /// times — the underlying actors are idempotent. Skips silently for
     /// non-local backends.
     func warmupBackends() {
-        let transcriptionURL = effectiveTranscriptionBaseURL
-        let llmURL = effectiveLLMBaseURL
+        let transcriptionURL = transcriptionBaseURL
+        let llmURL = llmBaseURL
 
         if let kind = try? TranscriptionBackendKind.parse(baseURL: transcriptionURL),
            case .local(let identifier) = kind {
@@ -1746,8 +1543,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         intent: SessionIntent,
         context: AppContext,
         postProcessingService: PostProcessingService,
-        customVocabulary: String,
-        customSystemPrompt: String
+        customVocabulary: String
     ) async -> (finalTranscript: String, outcome: TranscriptProcessingOutcome, prompt: String) {
         let trimmedRawTranscript = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -1779,8 +1575,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
             let result = try await postProcessingService.postProcess(
                 transcript: trimmedRawTranscript,
                 context: context,
-                customVocabulary: customVocabulary,
-                customSystemPrompt: customSystemPrompt
+                customVocabulary: customVocabulary
             )
             return (result.transcript, .postProcessingSucceeded, result.prompt)
         } catch {
@@ -1849,20 +1644,13 @@ final class AppState: ObservableObject, @unchecked Sendable {
                 } catch {}
             }
 
-        let postProcessingService = PostProcessingService(
-            apiKey: effectiveLLMAPIKey,
-            baseURL: effectiveLLMBaseURL,
-            preferredModel: postProcessingModel,
-            preferredFallbackModel: postProcessingFallbackModel
-        )
+        let postProcessingService = PostProcessingService(baseURL: llmBaseURL)
 
             self.transcriptionTask?.cancel()
             self.transcriptionTask = Task {
                 do {
-                    let transcriptionService = try TranscriptionService(
-                        apiKey: self.effectiveTranscriptionAPIKey,
-                        baseURL: self.effectiveTranscriptionBaseURL,
-                        transcriptionModel: self.transcriptionModel,
+                    let transcriptionService = TranscriptionService(
+                        baseURL: self.transcriptionBaseURL,
                         transcriptionLanguage: self.transcriptionLanguage
                     )
                     async let transcript = transcriptionService.transcribe(fileURL: transcriptionFileURL)
@@ -1885,8 +1673,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
                         intent: sessionIntent,
                         context: appContext,
                         postProcessingService: postProcessingService,
-                        customVocabulary: self.customVocabulary,
-                        customSystemPrompt: self.customSystemPrompt
+                        customVocabulary: self.customVocabulary
                     )
                     try Task.checkCancellation()
 

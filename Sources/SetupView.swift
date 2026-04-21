@@ -11,11 +11,9 @@ struct SetupView: View {
     private let freeflowRepoURL = URL(string: "https://github.com/verdana86/geMMaFloW")!
     private enum SetupStep: Int, CaseIterable {
         case welcome = 0
-        case micPermission
-        case accessibility
-        case screenRecording
-        case holdShortcut
-        case toggleShortcut
+        case languagePreference
+        case permissions
+        case shortcuts
         case testTranscription
         case ready
     }
@@ -23,8 +21,8 @@ struct SetupView: View {
     @State private var currentStep = SetupStep.welcome
     @State private var micPermissionGranted = false
     @State private var accessibilityGranted = false
-    @State private var accessibilityTimer: Timer?
-    @State private var screenRecordingTimer: Timer?
+    @State private var permissionsTimer: Timer?
+    @State private var transcriptionLanguage: TranscriptionLanguage = .auto
     @StateObject private var githubCache = GitHubMetadataCache.shared
 
     // Test transcription state
@@ -121,13 +119,13 @@ struct SetupView: View {
         .onAppear {
             checkMicPermission()
             checkAccessibility()
+            transcriptionLanguage = TranscriptionLanguage.fromISO(appState.transcriptionLanguage)
             Task {
                 await githubCache.fetchIfNeeded()
             }
         }
         .onDisappear {
-            accessibilityTimer?.invalidate()
-            screenRecordingTimer?.invalidate()
+            permissionsTimer?.invalidate()
             appState.resumeHotkeyMonitoringAfterShortcutCapture()
         }
         .onChange(of: isCapturingShortcut) { isCapturing in
@@ -144,16 +142,12 @@ struct SetupView: View {
         switch currentStep {
         case .welcome:
             welcomeStep
-        case .micPermission:
-            micPermissionStep
-        case .accessibility:
-            accessibilityStep
-        case .screenRecording:
-            screenRecordingStep
-        case .holdShortcut:
-            holdShortcutStep
-        case .toggleShortcut:
-            toggleShortcutStep
+        case .languagePreference:
+            languagePreferenceStep
+        case .permissions:
+            permissionsStep
+        case .shortcuts:
+            shortcutsStep
         case .testTranscription:
             testTranscriptionStep
         case .ready:
@@ -281,161 +275,145 @@ struct SetupView: View {
         }
     }
 
-    var micPermissionStep: some View {
+    var languagePreferenceStep: some View {
         VStack(spacing: 20) {
-            Image(systemName: "mic.fill")
+            Image(systemName: "character.bubble")
                 .font(.system(size: 60))
                 .foregroundStyle(.blue)
 
-            Text("Microphone Access")
+            Text("Dictation Language")
                 .font(.title)
                 .fontWeight(.bold)
 
-            Text("geMMaFloW needs access to your microphone to record audio for transcription.")
+            Text("Pick the language you speak most often. You can change it later in Settings.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            HStack {
-                Image(systemName: "mic.fill")
-                    .frame(width: 24)
-                    .foregroundStyle(.blue)
-                Text("Microphone")
-                Spacer()
-                if micPermissionGranted {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                    Text("Granted")
-                        .foregroundStyle(.green)
-                } else {
-                    Button("Grant Access") {
-                        requestMicPermission()
-                    }
+            Picker("Language", selection: $transcriptionLanguage) {
+                ForEach(TranscriptionLanguage.allCases) { language in
+                    Text(language.displayName).tag(language)
                 }
             }
-            .padding(12)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .cornerRadius(8)
+            .labelsHidden()
+            .frame(maxWidth: 340)
+            .onChange(of: transcriptionLanguage) { newValue in
+                guard appState.transcriptionLanguage != newValue.isoCode else { return }
+                appState.transcriptionLanguage = newValue.isoCode
+            }
 
+            Text("Auto works but can be unreliable on short clips — picking a specific language locks WhisperKit to it and reduces hallucinations on silent audio.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    var accessibilityStep: some View {
+    var permissionsStep: some View {
         VStack(spacing: 20) {
-            Image(systemName: "hand.raised.fill")
+            Image(systemName: "lock.shield.fill")
                 .font(.system(size: 60))
                 .foregroundStyle(.blue)
 
-            Text("Accessibility Access")
+            Text("System Permissions")
                 .font(.title)
                 .fontWeight(.bold)
 
-            Text("geMMaFloW needs Accessibility access to paste transcribed text into your apps.")
+            Text("geMMaFloW needs three macOS permissions to work. Grant them all to continue.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            HStack {
-                Image(systemName: "hand.raised.fill")
-                    .frame(width: 24)
-                    .foregroundStyle(.blue)
-                Text("Accessibility")
-                Spacer()
-                if accessibilityGranted {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                    Text("Granted")
-                        .foregroundStyle(.green)
-                } else {
-                    Button("Open Settings") {
-                        requestAccessibility()
-                    }
-                }
+            VStack(spacing: 10) {
+                permissionRow(
+                    icon: "mic.fill",
+                    title: "Microphone",
+                    subtitle: "Record audio for transcription.",
+                    granted: micPermissionGranted,
+                    actionLabel: "Grant",
+                    action: { requestMicPermission() }
+                )
+                permissionRow(
+                    icon: "hand.raised.fill",
+                    title: "Accessibility",
+                    subtitle: "Paste transcribed text at the cursor.",
+                    granted: accessibilityGranted,
+                    actionLabel: "Open Settings",
+                    action: { requestAccessibility() }
+                )
+                permissionRow(
+                    icon: "camera.viewfinder",
+                    title: "Screen Recording",
+                    subtitle: "Adapt transcription to your current app (local-only — no data leaves your Mac).",
+                    granted: appState.hasScreenRecordingPermission,
+                    actionLabel: "Grant",
+                    action: { appState.requestScreenCapturePermission() }
+                )
             }
-            .padding(12)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .cornerRadius(8)
 
             if !accessibilityGranted {
-                Text("Note: If you rebuilt the app, you may need to\nremove and re-add it in Accessibility settings.")
+                Text("Note: If you rebuilt the app, you may need to remove and re-add it in Accessibility settings.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
-
         }
-        .onAppear {
-            startAccessibilityPolling()
-        }
-        .onDisappear {
-            accessibilityTimer?.invalidate()
-        }
+        .onAppear { startPermissionsPolling() }
+        .onDisappear { permissionsTimer?.invalidate() }
     }
 
-    var screenRecordingStep: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "camera.viewfinder")
-                .font(.system(size: 60))
+    private func permissionRow(
+        icon: String,
+        title: String,
+        subtitle: String,
+        granted: Bool,
+        actionLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: icon)
+                .frame(width: 24)
+                .foregroundStyle(.blue)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.headline)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            if granted {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Text("Granted")
+                    .foregroundStyle(.green)
+                    .font(.caption)
+            } else {
+                Button(actionLabel, action: action)
+                    .font(.caption)
+            }
+        }
+        .padding(12)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .cornerRadius(8)
+    }
+
+    var shortcutsStep: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "keyboard.fill")
+                .font(.system(size: 50))
                 .foregroundStyle(.blue)
 
-            Text("Screen Recording")
+            Text("Dictation Shortcuts")
                 .font(.title)
                 .fontWeight(.bold)
 
-            Text("geMMaFloW intelligently adapts the transcription to the current app you're working in (ex. spelling names in an email correctly).")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Text("It needs this permission to see which app you're working in and any in-progress work. Nothing is stored on geMMaFloW's servers (geMMaFloW doesn't have servers).")
+            Text("Choose one shortcut to hold while speaking, and another to tap once to start and again to stop. You can disable either.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .font(.callout)
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack {
-                Image(systemName: "camera.viewfinder")
-                    .frame(width: 24)
-                    .foregroundStyle(.blue)
-                Text("Screen Recording")
-                Spacer()
-                if appState.hasScreenRecordingPermission {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                    Text("Granted")
-                        .foregroundStyle(.green)
-                } else {
-                    Button("Grant Access") {
-                        appState.requestScreenCapturePermission()
-                    }
-                }
-            }
-            .padding(12)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .cornerRadius(8)
-
-        }
-        .onAppear {
-            startScreenRecordingPolling()
-        }
-        .onDisappear {
-            screenRecordingTimer?.invalidate()
-        }
-    }
-
-    var holdShortcutStep: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "keyboard.fill")
-                .font(.system(size: 60))
-                .foregroundStyle(.blue)
-
-            Text("Hold to Talk Shortcut")
-                .font(.title)
-                .fontWeight(.bold)
-
-            Text("Choose the shortcut you want to hold while speaking.\nRelease it to stop unless you latch into tap mode later, or disable hold-to-talk entirely.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             ShortcutRoleSection(
@@ -447,32 +425,6 @@ struct SetupView: View {
                     holdShortcutValidationMessage = appState.setShortcut(binding, for: .hold)
                 }
             )
-                .padding(.top, 10)
-
-            if appState.holdShortcut.usesFnKey {
-                Text("Tip: If Fn opens Emoji picker, go to System Settings > Keyboard and change \"Press fn key to\" to \"Do Nothing\".")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .multilineTextAlignment(.center)
-            }
-
-        }
-    }
-
-    var toggleShortcutStep: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "switch.2")
-                .font(.system(size: 60))
-                .foregroundStyle(.blue)
-
-            Text("Tap to Toggle Shortcut")
-                .font(.title)
-                .fontWeight(.bold)
-
-            Text("Choose the shortcut you want to tap once to start dictating and tap again to stop.\nIf this shortcut becomes active while you are holding the hold shortcut, geMMaFloW latches into tap mode. You can also disable tap-to-toggle entirely.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
 
             ShortcutRoleSection(
                 role: .toggle,
@@ -483,15 +435,13 @@ struct SetupView: View {
                     toggleShortcutValidationMessage = appState.setShortcut(binding, for: .toggle)
                 }
             )
-                .padding(.top, 10)
 
-            if appState.toggleShortcut.usesFnKey {
+            if appState.holdShortcut.usesFnKey || appState.toggleShortcut.usesFnKey {
                 Text("Tip: If Fn opens Emoji picker, go to System Settings > Keyboard and change \"Press fn key to\" to \"Do Nothing\".")
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .multilineTextAlignment(.center)
             }
-
         }
     }
 
@@ -690,12 +640,10 @@ struct SetupView: View {
 
     private var canContinueFromCurrentStep: Bool {
         switch currentStep {
-        case .micPermission:
+        case .permissions:
             return micPermissionGranted
-        case .accessibility:
-            return accessibilityGranted
-        case .screenRecording:
-            return appState.hasScreenRecordingPermission
+                && accessibilityGranted
+                && appState.hasScreenRecordingPermission
         case .testTranscription:
             return testPhase == .done && !testTranscript.isEmpty && testError == nil
         default:
@@ -767,24 +715,17 @@ struct SetupView: View {
         accessibilityGranted = AXIsProcessTrusted()
     }
 
-    func startAccessibilityPolling() {
-        accessibilityTimer?.invalidate()
-        accessibilityTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            DispatchQueue.main.async {
-                checkAccessibility()
-            }
-        }
-    }
-
     func requestAccessibility() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
         AXIsProcessTrustedWithOptions(options)
     }
 
-    func startScreenRecordingPolling() {
-        screenRecordingTimer?.invalidate()
-        screenRecordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+    func startPermissionsPolling() {
+        permissionsTimer?.invalidate()
+        permissionsTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
             DispatchQueue.main.async {
+                checkMicPermission()
+                checkAccessibility()
                 appState.hasScreenRecordingPermission = CGPreflightScreenCaptureAccess()
             }
         }
@@ -864,10 +805,9 @@ struct SetupView: View {
 
                     Task {
                         do {
-                            let service = try TranscriptionService(
-                                apiKey: appState.apiKey,
-                                baseURL: appState.apiBaseURL,
-                                transcriptionModel: appState.transcriptionModel
+                            let service = TranscriptionService(
+                                baseURL: appState.transcriptionBaseURL,
+                                transcriptionLanguage: appState.transcriptionLanguage
                             )
                             let transcript = try await service.transcribe(fileURL: url)
                             await MainActor.run {

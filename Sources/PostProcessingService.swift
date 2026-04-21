@@ -136,37 +136,23 @@ Behavior:
 """
 
     private let backend: LLMBackend
-    private let backendIsLocal: Bool
-    private let preferredModel: String
-    private let preferredFallbackModel: String
-    private let defaultModel = "openai/gpt-oss-20b"
-    private let defaultFallbackModel = "meta-llama/llama-4-scout-17b-16e-instruct"
-    private let defaultModelReasoningEffort = "low"
-    private let postProcessingMaxCompletionTokens = 4096
+    private let modelId: String
     // 300s (5 min) accommodates first-use MLX model download (~1.5-5 GB).
     // Loaded containers are cached, so subsequent calls complete in seconds.
     private let postProcessingTimeoutSeconds: TimeInterval = 300
 
-    init(
-        apiKey: String = "",
-        baseURL: String = "",
-        preferredModel: String = "",
-        preferredFallbackModel: String = ""
-    ) {
+    init(baseURL: String = "") {
         // Local-only post-processing via MLX. Any baseURL that isn't a
         // `local://mlx/...` sentinel gets mapped to the default local model.
-        let modelId: String
+        let resolvedModelId: String
         if let kind = try? LLMBackendKind.parse(baseURL: baseURL),
            case .localMLX(let id) = kind {
-            modelId = id ?? LocalLLMModelChoice.default.mlxModelId
+            resolvedModelId = id ?? LocalLLMModelChoice.default.mlxModelId
         } else {
-            modelId = LocalLLMModelChoice.default.mlxModelId
+            resolvedModelId = LocalLLMModelChoice.default.mlxModelId
         }
-        self.backend = LocalLLMBackend(modelId: modelId)
-        self.backendIsLocal = true
-        self.preferredModel = preferredModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.preferredFallbackModel = preferredFallbackModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        _ = apiKey  // kept for API compat; unused in local-only path
+        self.modelId = resolvedModelId
+        self.backend = LocalLLMBackend(modelId: resolvedModelId)
     }
 
     /// Translates LLMBackendError (the shared transport-level error) into
@@ -189,8 +175,7 @@ Behavior:
     func postProcess(
         transcript: String,
         context: AppContext,
-        customVocabulary: String,
-        customSystemPrompt: String = ""
+        customVocabulary: String
     ) async throws -> PostProcessingResult {
         let vocabularyTerms = mergedVocabularyTerms(rawVocabulary: customVocabulary)
 
@@ -203,8 +188,7 @@ Behavior:
                 return try await self.processWithFallback(
                     transcript: transcript,
                     contextSummary: context.contextSummary,
-                    customVocabulary: vocabularyTerms,
-                    customSystemPrompt: customSystemPrompt
+                    customVocabulary: vocabularyTerms
                 )
             }
 
@@ -277,46 +261,13 @@ Behavior:
     private func processWithFallback(
         transcript: String,
         contextSummary: String,
-        customVocabulary: [String],
-        customSystemPrompt: String = ""
+        customVocabulary: [String]
     ) async throws -> PostProcessingResult {
-        let primaryModel = resolvedPrimaryModel()
-        let retryModel = resolvedRetryModel(for: primaryModel)
-        do {
-            return try await process(
-                transcript: transcript,
-                contextSummary: contextSummary,
-                model: primaryModel,
-                customVocabulary: customVocabulary,
-                customSystemPrompt: customSystemPrompt
-            )
-        } catch let error as PostProcessingError {
-            let shouldFallback: Bool
-            switch error {
-            case .requestFailed(let statusCode, _):
-                shouldFallback = statusCode == 429
-            case .emptyOutput:
-                shouldFallback = true
-            default:
-                shouldFallback = false
-            }
-
-            guard shouldFallback else {
-                throw error
-            }
-
-            guard let retryModel else {
-                throw error
-            }
-
-            return try await process(
-                transcript: transcript,
-                contextSummary: contextSummary,
-                model: retryModel,
-                customVocabulary: customVocabulary,
-                customSystemPrompt: customSystemPrompt
-            )
-        }
+        return try await process(
+            transcript: transcript,
+            contextSummary: contextSummary,
+            customVocabulary: customVocabulary
+        )
     }
 
     private func processCommandTransformWithFallback(
@@ -325,69 +276,20 @@ Behavior:
         contextSummary: String,
         customVocabulary: [String]
     ) async throws -> PostProcessingResult {
-        let primaryModel = resolvedPrimaryModel()
-        let retryModel = resolvedRetryModel(for: primaryModel)
-        do {
-            return try await processCommandTransform(
-                selectedText: selectedText,
-                voiceCommand: voiceCommand,
-                contextSummary: contextSummary,
-                model: primaryModel,
-                customVocabulary: customVocabulary
-            )
-        } catch let error as PostProcessingError {
-            let shouldFallback: Bool
-            switch error {
-            case .requestFailed(let statusCode, _):
-                shouldFallback = statusCode == 429
-            case .emptyOutput:
-                shouldFallback = true
-            default:
-                shouldFallback = false
-            }
-
-            guard shouldFallback else {
-                throw error
-            }
-
-            guard let retryModel else {
-                throw error
-            }
-
-            return try await processCommandTransform(
-                selectedText: selectedText,
-                voiceCommand: voiceCommand,
-                contextSummary: contextSummary,
-                model: retryModel,
-                customVocabulary: customVocabulary
-            )
-        }
-    }
-
-    private func resolvedPrimaryModel() -> String {
-        preferredModel.isEmpty ? defaultModel : preferredModel
-    }
-
-    private func resolvedRetryModel(for primaryModel: String) -> String? {
-        if !preferredFallbackModel.isEmpty {
-            return preferredFallbackModel == primaryModel ? nil : preferredFallbackModel
-        }
-        if primaryModel == defaultModel {
-            return defaultFallbackModel
-        }
-        if primaryModel == defaultFallbackModel {
-            return defaultModel
-        }
-        return nil
+        return try await processCommandTransform(
+            selectedText: selectedText,
+            voiceCommand: voiceCommand,
+            contextSummary: contextSummary,
+            customVocabulary: customVocabulary
+        )
     }
 
     private func process(
         transcript: String,
         contextSummary: String,
-        model: String,
-        customVocabulary: [String],
-        customSystemPrompt: String = ""
+        customVocabulary: [String]
     ) async throws -> PostProcessingResult {
+        let model = modelId
         let normalizedVocabulary = normalizedVocabularyText(customVocabulary)
         let vocabularyPrompt = if !normalizedVocabulary.isEmpty {
             """
@@ -399,10 +301,7 @@ Use these spellings exactly in the output when relevant:
             ""
         }
 
-        let baseSystemPrompt = backendIsLocal ? Self.localDictationSystemPrompt : Self.defaultSystemPrompt
-        var systemPrompt = customSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? baseSystemPrompt
-            : customSystemPrompt
+        var systemPrompt = Self.localDictationSystemPrompt
         if !vocabularyPrompt.isEmpty {
             systemPrompt += "\n\n" + vocabularyPrompt
         }
@@ -410,7 +309,7 @@ Use these spellings exactly in the output when relevant:
         // Gemma 4 tends to confuse long CONTEXT text with the transcript and
         // echoes screen contents back. Cap context aggressively for local models.
         let effectiveContext: String
-        if backendIsLocal && contextSummary.count > 160 {
+        if contextSummary.count > 160 {
             effectiveContext = String(contextSummary.prefix(160)) + "…"
         } else {
             effectiveContext = contextSummary
@@ -441,9 +340,9 @@ Model: \(model)
                 LLMChatMessage(role: .user, content: userMessage)
             ],
             temperature: 0.0,
-            maxCompletionTokens: model == defaultModel ? postProcessingMaxCompletionTokens : nil,
-            reasoningEffort: model == defaultModel ? defaultModelReasoningEffort : nil,
-            includeReasoning: model == defaultModel ? false : nil,
+            maxCompletionTokens: nil,
+            reasoningEffort: nil,
+            includeReasoning: nil,
             timeoutSeconds: postProcessingTimeoutSeconds
         )
 
@@ -468,9 +367,9 @@ Model: \(model)
         selectedText: String,
         voiceCommand: String,
         contextSummary: String,
-        model: String,
         customVocabulary: [String]
     ) async throws -> PostProcessingResult {
+        let model = modelId
         let normalizedVocabulary = normalizedVocabularyText(customVocabulary)
         let vocabularyPrompt = if !normalizedVocabulary.isEmpty {
             """
@@ -514,9 +413,9 @@ Model: \(model)
                 LLMChatMessage(role: .user, content: userMessage)
             ],
             temperature: 0.0,
-            maxCompletionTokens: model == defaultModel ? postProcessingMaxCompletionTokens : nil,
-            reasoningEffort: model == defaultModel ? defaultModelReasoningEffort : nil,
-            includeReasoning: model == defaultModel ? false : nil,
+            maxCompletionTokens: nil,
+            reasoningEffort: nil,
+            includeReasoning: nil,
             timeoutSeconds: postProcessingTimeoutSeconds
         )
 
