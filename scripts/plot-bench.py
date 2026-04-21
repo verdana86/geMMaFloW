@@ -93,10 +93,29 @@ def plot_stacked(rows: list[dict]) -> Path:
                color=COMBO_COLORS[combo], alpha=1.0,
                label=f"{label} — Gemma")
 
+    # Label every bar with its total latency so numbers are readable at a
+    # glance without hunting the y-axis.
+    for i, combo in enumerate(COMBO_ORDER):
+        offset = (i - 1.5) * width
+        for xi, length in enumerate(LENGTH_ORDER):
+            row = next(
+                (r for r in rows
+                 if r["length"] == length
+                 and r["whisper"] == combo[0]
+                 and r["gemma"] == combo[1]),
+                None,
+            )
+            if not row:
+                continue
+            total = (row["whisper_ms"] + row["gemma_ms"]) / 1000
+            ax.text(xi + offset, total + 1.5, f"{total:.0f}s",
+                    ha="center", va="bottom", fontsize=7, color="#333")
+
     ax.set_xticks(x)
-    ax.set_xticklabels([f"{l}\n({LENGTH_SECONDS[l]}s audio)" for l in LENGTH_ORDER])
-    ax.set_ylabel("Latency (seconds)")
+    ax.set_xticklabels([f"{LENGTH_SECONDS[l]} s audio" for l in LENGTH_ORDER])
+    ax.set_ylabel("Pipeline latency (seconds)")
     ax.set_title("Pipeline latency by combo — Whisper (light) + Gemma (solid)")
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f} s"))
     ax.legend(loc="upper left", fontsize=8, ncol=2)
     ax.grid(True, axis="y", alpha=0.3)
     ax.set_axisbelow(True)
@@ -130,11 +149,13 @@ def plot_scaling(rows: list[dict]) -> Path:
 
     # Diagonal: real-time line (latency == audio length).
     ax.plot(audio_seconds, audio_seconds, "--", color="gray", alpha=0.5,
-            label="real-time (lat = audio)")
+            label="real-time (latency = audio duration)")
 
     ax.set_xlabel("Audio length (seconds)")
     ax.set_ylabel("Total pipeline latency (seconds)")
     ax.set_title("Total latency scaling vs audio length")
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f} s"))
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f} s"))
     ax.legend(loc="upper left", fontsize=9)
     ax.grid(True, alpha=0.3)
     ax.set_axisbelow(True)
@@ -170,12 +191,30 @@ def plot_realtime_factor(rows: list[dict]) -> Path:
         label = f"{combo[0].replace('Whisper ', 'W-')} + {combo[1].replace('Gemma ', 'G-')}"
         ax.bar(x + offset, factors, width, color=COMBO_COLORS[combo], label=label)
 
+    # Label every bar with its numeric factor so the magnitude is explicit.
+    for i, combo in enumerate(COMBO_ORDER):
+        offset = (i - 1.5) * width
+        for xi, length in enumerate(LENGTH_ORDER):
+            row = next(
+                (r for r in rows
+                 if r["length"] == length
+                 and r["whisper"] == combo[0]
+                 and r["gemma"] == combo[1]),
+                None,
+            )
+            if not row:
+                continue
+            factor = (row["total_ms"] / 1000) / LENGTH_SECONDS[length]
+            ax.text(xi + offset, factor + 0.05, f"{factor:.2f}×",
+                    ha="center", va="bottom", fontsize=7, color="#333")
+
     ax.axhline(1.0, color="red", linestyle="--", linewidth=1, alpha=0.7,
-               label="real-time threshold")
+               label="real-time threshold (1.0×)")
     ax.set_xticks(x)
-    ax.set_xticklabels([f"{l}" for l in LENGTH_ORDER])
-    ax.set_ylabel("Realtime factor (latency / audio duration)")
-    ax.set_title("Realtime factor — values <1 mean faster than real-time")
+    ax.set_xticklabels([f"{LENGTH_SECONDS[l]} s audio" for l in LENGTH_ORDER])
+    ax.set_ylabel("Realtime factor (× audio duration)")
+    ax.set_title("Realtime factor — values <1× mean faster than real-time")
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.1f}×"))
     ax.legend(loc="upper right", fontsize=9)
     ax.grid(True, axis="y", alpha=0.3)
     ax.set_axisbelow(True)
