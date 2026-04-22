@@ -67,6 +67,7 @@ struct LocalLLMModelChoiceTests {
     func modelIdsMatchMLXRegistry() {
         #expect(LocalLLMModelChoice.gemma4E4B4bit.mlxModelId == "mlx-community/gemma-4-e4b-it-4bit")
         #expect(LocalLLMModelChoice.gemma4E2B4bit.mlxModelId == "mlx-community/gemma-4-e2b-it-4bit")
+        #expect(LocalLLMModelChoice.qwen25_15B4bit.mlxModelId == "mlx-community/Qwen2.5-1.5B-Instruct-4bit")
     }
 
     @Test("Sentinel URL encodes the model id in the path")

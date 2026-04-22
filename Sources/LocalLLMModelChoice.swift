@@ -1,12 +1,14 @@
 import Foundation
 
 /// Curated list of bundled LLM presets the UI offers. MLX's registry
-/// includes dozens of models; exposing all would overwhelm. These two
-/// cover the "quality" and "speed" slots for Gemma 4 at 4-bit
-/// quantization.
+/// includes dozens of models; exposing all would overwhelm. The three
+/// options cover the full quality/speed trade-off surface for dictation
+/// cleanup at 4-bit quantization — from Qwen 2.5 1.5B (fastest, ~870 MB)
+/// through Gemma 4 E2B to Gemma 4 E4B (most accurate, ~5 GB).
 enum LocalLLMModelChoice: String, CaseIterable, Identifiable {
-    case gemma4E4B4bit
+    case qwen25_15B4bit
     case gemma4E2B4bit
+    case gemma4E4B4bit
 
     /// Default when the user opts into local LLM without picking a preset.
     /// E4B is the best quality at an acceptable ~5 GB on disk.
@@ -16,8 +18,9 @@ enum LocalLLMModelChoice: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
+        case .qwen25_15B4bit: return "Qwen 2.5 1.5B — lightest, fastest (~870 MB)"
+        case .gemma4E2B4bit: return "Gemma 4 E2B — balanced (~3.5 GB)"
         case .gemma4E4B4bit: return "Gemma 4 E4B — best quality (~5 GB)"
-        case .gemma4E2B4bit: return "Gemma 4 E2B — lighter (~3.5 GB)"
         }
     }
 
@@ -26,8 +29,9 @@ enum LocalLLMModelChoice: String, CaseIterable, Identifiable {
     /// data tests cheap).
     var mlxModelId: String {
         switch self {
-        case .gemma4E4B4bit: return "mlx-community/gemma-4-e4b-it-4bit"
+        case .qwen25_15B4bit: return "mlx-community/Qwen2.5-1.5B-Instruct-4bit"
         case .gemma4E2B4bit: return "mlx-community/gemma-4-e2b-it-4bit"
+        case .gemma4E4B4bit: return "mlx-community/gemma-4-e4b-it-4bit"
         }
     }
 

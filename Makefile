@@ -125,9 +125,9 @@ clean-user-state:
 	@echo "  ~/Library/Caches/$(BUNDLE_ID)"
 	@echo "  ~/Library/Application Support/$(APP_NAME)"
 	@echo "  ~/Documents/huggingface/models/argmaxinc/whisperkit-coreml"
-	@echo "  ~/Documents/huggingface/models/mlx-community/gemma-*"
+	@echo "  ~/Documents/huggingface/models/mlx-community/{gemma-*,Qwen*}"
 	@echo "  ~/.cache/huggingface/hub/models--argmaxinc--whisperkit-coreml (legacy)"
-	@echo "  ~/.cache/huggingface/hub/models--mlx-community--gemma-* (legacy)"
+	@echo "  ~/.cache/huggingface/hub/models--mlx-community--{gemma-*,Qwen*} (legacy)"
 	@echo "  TCC grants: Microphone, Accessibility, ScreenCapture"
 	@read -p "Continue? [y/N] " ans && [ "$$ans" = "y" ] || [ "$$ans" = "Y" ]
 	-rm -rf "/Applications/$(APP_NAME).app"
@@ -135,9 +135,9 @@ clean-user-state:
 	-rm -rf "$$HOME/Library/Application Support/$(APP_NAME)"
 	-defaults delete $(BUNDLE_ID) 2>/dev/null || true
 	-rm -rf "$$HOME/Documents/huggingface/models/argmaxinc/whisperkit-coreml"
-	-find "$$HOME/Documents/huggingface/models/mlx-community" -maxdepth 1 -type d -name 'gemma*' -exec rm -rf {} + 2>/dev/null || true
+	-find "$$HOME/Documents/huggingface/models/mlx-community" -maxdepth 1 -type d \( -name 'gemma*' -o -name 'Qwen*' \) -exec rm -rf {} + 2>/dev/null || true
 	-rm -rf "$$HOME/.cache/huggingface/hub/models--argmaxinc--whisperkit-coreml"
-	-find "$$HOME/.cache/huggingface/hub" -maxdepth 1 -type d -name 'models--mlx-community--gemma*' -exec rm -rf {} + 2>/dev/null || true
+	-find "$$HOME/.cache/huggingface/hub" -maxdepth 1 -type d \( -name 'models--mlx-community--gemma*' -o -name 'models--mlx-community--Qwen*' \) -exec rm -rf {} + 2>/dev/null || true
 	-tccutil reset Microphone $(BUNDLE_ID) 2>/dev/null || true
 	-tccutil reset Accessibility $(BUNDLE_ID) 2>/dev/null || true
 	-tccutil reset ScreenCapture $(BUNDLE_ID) 2>/dev/null || true
