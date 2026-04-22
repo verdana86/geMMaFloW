@@ -79,6 +79,15 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
     private let _bufferCount = OSAllocatedUnfairLock(initialState: 0)
     private let fileWriteErrorLock = OSAllocatedUnfairLock(initialState: ())
     private var watchdogTimer: DispatchSourceTimer?
+    /// Keeps the capture session alive after `stopRecording` so the next
+    /// hotkey press doesn't pay the ~180 ms `AVCaptureSession.startRunning`
+    /// latency. Fires after `warmKeepDuration` idle seconds and tears the
+    /// session down, clearing the orange mic indicator.
+    private var warmKeepTimer: DispatchSourceTimer?
+    /// Which device UID (if any) the warm session is currently configured
+    /// for. If the user switches mic in Settings we tear down and re-make.
+    private var warmSessionDeviceUID: String?
+    private static let warmKeepDuration: TimeInterval = 60
     private let sessionQueue = DispatchQueue(label: "com.verdana86.gemmaflow.capture.session")
     private let sampleBufferQueue = DispatchQueue(label: "com.verdana86.gemmaflow.capture.samples")
     private var activeAudioFile: AVAudioFile?
@@ -191,6 +200,7 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
     }
 
     private func teardownSessionLocked() {
+        cancelWarmKeepTimer()
         removeSessionObservers()
         isSessionInterrupted = false
 
@@ -202,6 +212,7 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
         captureSession = nil
         currentInput = nil
         audioDataOutput = nil
+        warmSessionDeviceUID = nil
     }
 
     private func reportRecordingFailure(_ error: Error, completion: ((URL?) -> Void)? = nil) {
@@ -367,6 +378,27 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
     }
 
     private func makeSession(deviceUID: String?, outputURL: URL) throws {
+        // Warm-session fast path: reuse the running AVCaptureSession if it
+        // matches the requested device. We only need to open a new output
+        // file and rebind the sample-buffer delegate — skipping
+        // `AVCaptureSession.startRunning()` saves ~180 ms of hotkey latency.
+        if let existing = captureSession, existing.isRunning,
+           let output = audioDataOutput,
+           deviceMatchesWarmSession(requestedUID: deviceUID) {
+            cancelWarmKeepTimer()
+            output.setSampleBufferDelegate(self, queue: sampleBufferQueue)
+            isSessionInterrupted = false
+            activeAudioFile = nil
+            activeAudioFormat = nil
+            recordedFrameCount = 0
+            fileWriteErrorLock.withLock { _ in
+                fileWriteError = nil
+            }
+            tempFileURL = outputURL
+            os_log(.info, log: recordingLog, "reusing warm capture session — fast-path start")
+            return
+        }
+
         teardownSessionLocked()
 
         guard let device = preferredCaptureDevice(for: deviceUID, reason: "initial start") else {
@@ -415,6 +447,7 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
         captureSession = session
         currentInput = input
         audioDataOutput = dataOutput
+        warmSessionDeviceUID = device.uniqueID
         isSessionInterrupted = false
         activeAudioFile = nil
         activeAudioFormat = nil
@@ -433,6 +466,23 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
 
         os_log(.info, log: recordingLog, "capture session running with device %{public}@ [uid=%{public}@]", device.localizedName, device.uniqueID)
         tempFileURL = outputURL
+    }
+
+    /// True when the running capture session is already using the device
+    /// the caller wants. Used to decide whether the warm-session fast path
+    /// is applicable.
+    private func deviceMatchesWarmSession(requestedUID: String?) -> Bool {
+        guard let warmUID = warmSessionDeviceUID else { return false }
+        if let requestedUID, !requestedUID.isEmpty, requestedUID != "default" {
+            return warmUID == requestedUID
+        }
+        // Requesting system default — accept the warm session whatever
+        // device it's on. If the default switched under us (e.g. AirPods
+        // reconnected), `session.isRunning` will still be true and MLX
+        // will keep capturing from the original device. Worst case the
+        // user records one clip from the wrong mic, then reopens the mic
+        // picker to re-select.
+        return true
     }
 
     func startRecording(deviceUID: String? = nil) throws {
@@ -479,10 +529,15 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
 
         sessionQueue.async {
             self.cancelWatchdog()
-            self.teardownSessionLocked()
+            // Detach the sample-buffer delegate so incoming audio during
+            // the warm idle window doesn't trigger `fileWriteError` or
+            // bump frame counts. Session stays running, mic light stays
+            // on, next startRecording reuses the warm session.
+            self.audioDataOutput?.setSampleBufferDelegate(nil, queue: nil)
             let outputURL = self.finishAudioFileLocked(discard: false)
             self._recording.withLock { $0 = false }
             self.liveLevelNormalizerLock.withLock { $0.reset() }
+            self.scheduleWarmKeepTeardownLocked()
             DispatchQueue.main.async {
                 self.isRecording = false
                 self.audioLevel = 0.0
@@ -494,10 +549,11 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
     func cancelRecording() {
         sessionQueue.async {
             self.cancelWatchdog()
-            self.teardownSessionLocked()
+            self.audioDataOutput?.setSampleBufferDelegate(nil, queue: nil)
             let discardURL = self.finishAudioFileLocked(discard: true)
             self._recording.withLock { $0 = false }
             self.liveLevelNormalizerLock.withLock { $0.reset() }
+            self.scheduleWarmKeepTeardownLocked()
             if let discardURL {
                 try? FileManager.default.removeItem(at: discardURL)
             }
@@ -506,6 +562,30 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
                 self.audioLevel = 0.0
             }
         }
+    }
+
+    /// Schedules a one-shot timer that tears the capture session down if no
+    /// new recording starts within `warmKeepDuration`. Cancels any existing
+    /// timer first. MUST be called from the session queue.
+    private func scheduleWarmKeepTeardownLocked() {
+        cancelWarmKeepTimer()
+        guard captureSession != nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: sessionQueue)
+        timer.schedule(deadline: .now() + Self.warmKeepDuration)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            guard !self._recording.withLock({ $0 }) else { return }
+            os_log(.info, log: recordingLog, "warm-keep window expired — tearing down capture session")
+            self.teardownSessionLocked()
+            self.warmKeepTimer = nil
+        }
+        warmKeepTimer = timer
+        timer.resume()
+    }
+
+    private func cancelWarmKeepTimer() {
+        warmKeepTimer?.cancel()
+        warmKeepTimer = nil
     }
 
     func cleanup() {

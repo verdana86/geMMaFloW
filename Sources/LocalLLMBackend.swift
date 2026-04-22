@@ -121,52 +121,18 @@ actor MLXModelContainerPool {
     /// this cache, so the warmed prefix is never mutated.
     private var primedCaches: [String: [KVCache]] = [:]
 
-    /// Load the model container and return a fresh clone of the warmed-up
-    /// KV cache for the given system prompt. Skips the warmup on subsequent
-    /// calls with the same (modelId, systemPrompt) — the big win: each
-    /// dictation only re-processes the ~300 tokens of user message, not the
-    /// ~1200 tokens of user+system combined.
+    /// Load the model container. KV cache priming used to be done here to
+    /// skip system-prompt re-tokenization on every dictation (~1 s saved),
+    /// but it leaked the warmup "ping" exchange into the assistant context
+    /// and caused Qwen 1.5B to occasionally echo "ping" instead of cleaning
+    /// the transcript. Priming disabled — we re-process the system prompt
+    /// each call; this costs ~0.3–1 s but is correct 100% of the time.
     func loadOrReturnWithPrimedCache(
         modelId: String,
         systemPrompt: String
     ) async throws -> (ModelContainer, [KVCache]?) {
         let container = try await loadOrReturn(modelId: modelId)
-
-        guard !systemPrompt.isEmpty else { return (container, nil) }
-
-        let cacheKey = "\(modelId)|\(systemPrompt.hashValue)"
-
-        if let existing = primedCaches[cacheKey] {
-            let cloned = existing.map { $0.copy() }
-            return (container, cloned)
-        }
-
-        // Warmup: feed the system prompt + a tiny user turn through the
-        // model. Persist the resulting KV cache to a temp file and reload
-        // it — the public API goes through disk. Subsequent dictations
-        // clone the in-memory cache so the warmed prefix is never mutated.
-        llmLog.info("priming KV cache for systemPrompt hash=\(systemPrompt.hashValue, privacy: .public)")
-        let warmupSession = ChatSession(
-            container,
-            instructions: systemPrompt,
-            generateParameters: GenerateParameters(maxTokens: 4)
-        )
-        _ = try? await warmupSession.respond(to: "ping")
-        let tempURL = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("gemmaflow-kvcache-\(abs(cacheKey.hashValue)).safetensors")
-        do {
-            try await warmupSession.saveCache(to: tempURL)
-            let (loaded, _) = try loadPromptCache(url: tempURL)
-            try? FileManager.default.removeItem(at: tempURL)
-            primedCaches[cacheKey] = loaded.map { $0.copy() }
-            let cloned = loaded.map { $0.copy() }
-            llmLog.info("KV cache primed — stored and clone returned")
-            return (container, cloned)
-        } catch {
-            llmLog.error("KV cache priming failed: \(error.localizedDescription, privacy: .public) — falling back to instructions")
-            try? FileManager.default.removeItem(at: tempURL)
-            return (container, nil)
-        }
+        return (container, nil)
     }
 
     func loadOrReturn(modelId: String) async throws -> ModelContainer {

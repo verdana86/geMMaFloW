@@ -295,11 +295,18 @@ Selected text: \(selectedText ?? "None")
         windowTitle: String?,
         screenshotAvailable: Bool
     ) -> String {
-        let activeApp = appName ?? "the active application"
-        if screenshotAvailable {
-            return "Could not reliably infer a two-sentence summary for \(activeApp) from the screenshot and metadata."
+        // Terse, factual context only — a small local LLM (Qwen 1.5B,
+        // Gemma E2B) tends to echo the CONTEXT field verbatim when it
+        // looks like prose. Keep this a short metadata line so the
+        // cleanup model uses it only as a spelling hint, not as content
+        // to transform.
+        let activeApp = appName ?? "unknown application"
+        var parts: [String] = []
+        parts.append("Active app: " + activeApp)
+        if let windowTitle, !windowTitle.isEmpty, windowTitle != appName {
+            parts.append("Window: " + windowTitle)
         }
-        return "Could not reliably infer a two-sentence summary for \(activeApp) from the visible metadata."
+        return parts.joined(separator: ". ") + "."
     }
 
     private func focusedWindowTitle(from appElement: AXUIElement) -> String? {
