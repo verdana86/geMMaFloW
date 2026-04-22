@@ -5,7 +5,7 @@
 <h1 align="center">geMMaFloW</h1>
 
 <p align="center">
-  100% local, 100% private voice-to-text for macOS — <b>WhisperKit + Gemma 4</b>, zero cloud.
+  100% local, 100% private voice-to-text for macOS — <b>WhisperKit + Qwen 2.5 (or Gemma 4)</b>, zero cloud.
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
 </p>
 
 <p align="center">
-  <i>Demo preserved from upstream <a href="https://github.com/zachlatta/freeflow">FreeFlow</a> — the UX is identical, only the backend changed (local WhisperKit + Gemma 4 instead of cloud Groq).</i>
+  <i>Demo preserved from upstream <a href="https://github.com/zachlatta/freeflow">FreeFlow</a> — the UX is identical, only the backend changed (local WhisperKit + Qwen/Gemma instead of cloud Groq).</i>
 </p>
 
 ---
@@ -36,7 +36,7 @@ Grab the latest DMG from the [**Releases page**](https://github.com/verdana86/ge
 
 1. Open the DMG, drag **geMMaFloW** into **Applications**.
 2. First launch: macOS will say the developer can't be verified — the DMG is signed with a local developer identity, not Apple-notarised yet. **Right-click the app icon → Open** (or open **System Settings → Privacy & Security → Open Anyway**).
-3. Run the in-app setup wizard once. It downloads Whisper + Gemma (~6.5 GB) and compiles them for your Neural Engine (3–7 min the first time). The wizard shows a sentence you can read aloud while the models warm up.
+3. Run the in-app setup wizard once. It downloads Whisper + the cleanup LLM (~2.5 GB for the default Whisper Large + Qwen 2.5 pair) and compiles Whisper for your Neural Engine (3–7 min the first time). The wizard shows a sentence you can read aloud while the models warm up.
 
 Requires macOS 14+ on Apple Silicon (M1/M2/M3/M4/M5). ~7 GB free disk, 16 GB RAM recommended.
 
@@ -64,7 +64,7 @@ So I replaced both cloud calls with on-device models:
 | Stage | FreeFlow upstream | **geMMaFloW** |
 |---|---|---|
 | Speech → text | Groq `whisper-large-v3` (cloud) | [**WhisperKit**](https://github.com/argmaxinc/WhisperKit) on the Neural Engine |
-| Text cleanup + context | Groq `gpt-oss-20b` / Llama 4 (cloud) | [**Gemma 4 E4B**](https://ai.google.dev/gemma) via [**MLX Swift**](https://github.com/ml-explore/mlx-swift) |
+| Text cleanup + context | Groq `gpt-oss-20b` / Llama 4 (cloud) | [**Qwen 2.5 1.5B**](https://huggingface.co/mlx-community/Qwen2.5-1.5B-Instruct-4bit) (default) or [**Gemma 4**](https://ai.google.dev/gemma), via [**MLX Swift**](https://github.com/ml-explore/mlx-swift) |
 | Active-app context inference | Groq `/chat/completions` | Local Accessibility API, no LLM call |
 | API keys required | Groq key | **none** |
 
@@ -83,7 +83,7 @@ flowchart LR
     C -- below threshold --> X[Discard]
     C -- speech --> D[WhisperKit<br/>on Neural Engine]
     D --> E[Raw transcript]
-    E --> F[Gemma 4 E4B<br/>via MLX]
+    E --> F[Qwen 2.5 1.5B<br/>or Gemma 4<br/>via MLX]
     G[Active app context<br/>name · window · selection] --> F
     F --> H[Cleaned transcript]
     H --> I[⌨️ Paste at cursor]
@@ -103,34 +103,37 @@ On release, the recording is normalized to 16 kHz mono Int16 WAV ([AudioNormaliz
 
 [TranscriptionService.swift](Sources/TranscriptionService.swift) hands the WAV to [WhisperKitBackend.swift](Sources/WhisperKitBackend.swift). WhisperKit runs Apple's Core ML port of Whisper directly on the Neural Engine. The first call loads the model (~1–3 s depending on variant); subsequent calls reuse a warm instance cached in memory, so a dictation is typically 1–2 s of transcription for a 10 s clip on an M-series chip.
 
-Three model variants are curated in [WhisperKitModelChoice.swift](Sources/WhisperKitModelChoice.swift):
+Two model variants are curated in [WhisperKitModelChoice.swift](Sources/WhisperKitModelChoice.swift):
 
 | Variant | Size | Use when |
 |---|---|---|
-| Turbo (`large-v3-turbo`) | ~630 MB | You want the fastest full-quality transcription |
-| Large v3 (default) | ~1.5 GB | Best accuracy, especially for non-English |
+| Large v3 (default) | ~1.5 GB | Best accuracy, especially for non-English and technical vocabulary |
 | Small | ~220 MB | Tight on disk or RAM |
 
 ### Stage 3 — Clean up (local)
 
-The raw Whisper output has filler words, no punctuation, and sometimes misspellings of domain terms. [PostProcessingService.swift](Sources/PostProcessingService.swift) feeds it to [LocalLLMBackend.swift](Sources/LocalLLMBackend.swift), which runs Gemma 4 4-bit via [MLX Swift](https://github.com/ml-explore/mlx-swift). The system prompt (in `PostProcessingService.swift`) instructs the model to:
+The raw Whisper output has filler words, no punctuation, and sometimes misspellings of domain terms. [PostProcessingService.swift](Sources/PostProcessingService.swift) feeds it to [LocalLLMBackend.swift](Sources/LocalLLMBackend.swift), which runs a 4-bit quantized LLM via [MLX Swift](https://github.com/ml-explore/mlx-swift). The system prompt (in `PostProcessingService.swift`) instructs the model to:
 
 - Preserve the user's intent and words — don't paraphrase
 - Apply self-corrections the user spoke ("no, sorry, I meant *Thursday*")
 - Add punctuation and capitalization
+- Format times (`18:46`) and bullet lists (`A… B… C…`) when the speaker's intent is clear
 - Respect a user-defined custom vocabulary (technical terms, names, acronyms)
 - Adapt formatting to the app you're dictating into (email vs. code vs. chat)
 
-Two Gemma presets ship, both 4-bit quantized:
+Three cleanup LLMs ship, all 4-bit quantized:
 
 | Variant | Size | Use when |
 |---|---|---|
-| Gemma 4 E4B (default) | ~3.8 GB | You want the best cleanup quality |
-| Gemma 4 E2B | ~1.7 GB | Lighter RAM footprint, faster on 8 GB Macs |
+| Qwen 2.5 1.5B (default) | ~870 MB | Best speed/size trade-off. Clean, natural cleanup in well under a second. |
+| Gemma 4 E2B | ~3.5 GB | You prefer Gemma's punctuation style and have the headroom |
+| Gemma 4 E4B | ~5 GB | Maximum cleanup quality on long mixed-language dictation |
+
+See [Performance](#performance) below for a reproducible benchmark of all Whisper × LLM combinations.
 
 ### App-context awareness (still local)
 
-[AppContextService.swift](Sources/AppContextService.swift) collects a small context packet about the frontmost app — its name, the window title, any text you had selected — through the macOS Accessibility API. In upstream FreeFlow this context was sent to the cloud LLM for summarization. Here it's just concatenated into the Gemma prompt locally. No screenshot, no OCR, no network call.
+[AppContextService.swift](Sources/AppContextService.swift) collects a small context packet about the frontmost app — its name, the window title, any text you had selected — through the macOS Accessibility API. In upstream FreeFlow this context was sent to the cloud LLM for summarization. Here it's just concatenated into the cleanup LLM prompt locally. No screenshot, no OCR, no network call.
 
 ### Paste
 
@@ -161,13 +164,13 @@ More detail in [docs/PRIVACY.md](docs/PRIVACY.md).
 
 geMMaFloW ships two Whisper variants (Small, Large-v3) and three cleanup LLMs (Qwen 2.5 1.5B, Gemma 4 E2B, Gemma 4 E4B) — six combinations to trade off speed and quality. The matrix below comes from a reproducible benchmark (`scripts/run-bench.sh`) on a single Apple Silicon laptop with TTS-generated audio (macOS `say`, voice Samantha). Same audio clip trimmed to 20 s / 40 s / 60 s / 81 s so you can see how each pipeline scales with length.
 
-### Total latency per pipeline (Whisper transcribe + Gemma cleanup)
+### Total latency per pipeline (Whisper transcribe + LLM cleanup)
 
 <p align="center">
-  <img src="docs/benchmark/latency-stacked.png" width="850" alt="Stacked latency — Whisper + Gemma for each combo">
+  <img src="docs/benchmark/latency-stacked.png" width="850" alt="Stacked latency — Whisper + cleanup LLM for each combo">
 </p>
 
-Light bars = Whisper transcription, solid bars = Gemma post-processing. Whisper is predictable and sub-linear in audio length; Gemma dominates the wall-clock budget and scales with transcript length.
+Light bars = Whisper transcription, solid bars = cleanup LLM (Qwen or Gemma). Whisper is predictable and sub-linear in audio length; the cleanup LLM dominates the wall-clock budget and scales with transcript length.
 
 ### Realtime factor (latency ÷ audio duration — lower is better)
 
@@ -196,7 +199,7 @@ All sample transcripts per combo are in [docs/benchmark/results.md](docs/benchma
 
 - **macOS 14 (Sonoma) or newer**
 - **Apple Silicon** (M1 / M2 / M3 / M4 / M5). Intel Macs are not supported and won't be — MLX + WhisperKit both target the ANE / Metal on Apple Silicon.
-- **~5 GB** of disk for the default model pair (Whisper Large v3 + Gemma 4 E4B)
+- **~2.5 GB** of disk for the default model pair (Whisper Large v3 + Qwen 2.5 1.5B). Up to ~7 GB if you opt into Gemma E4B for cleanup.
 - **16 GB** of RAM recommended. 8 GB works with the Small + E2B pair but is tight with both defaults loaded.
 
 ---
@@ -212,7 +215,7 @@ make run      # or just open build/GemmaFlow.app
 
 The `Makefile` handles a quirk of MLX + SwiftPM: SPM doesn't compile `.metal` shaders, so the build shells out to `xcodebuild` to produce `default.metallib` and copies it into the app bundle. It also codesigns with a stable self-signed identity (`geMMaFloW Dev Signer`) so that Accessibility / Microphone TCC prompts persist across rebuilds.
 
-First launch opens a setup wizard that walks you through permissions (Microphone, Accessibility, Screen Recording), hotkey binding, and the initial Whisper + Gemma model downloads. After that the app lives in the menu bar.
+First launch opens a setup wizard that walks you through permissions (Microphone, Accessibility, Screen Recording), hotkey binding, and the initial Whisper + cleanup-LLM model downloads. After that the app lives in the menu bar.
 
 ---
 
@@ -227,7 +230,7 @@ First launch opens a setup wizard that walks you through permissions (Microphone
 
 ## Status
 
-Active personal fork. The pipeline works end-to-end: hotkey → WhisperKit → Gemma 4 → paste, fully offline. What's still rough:
+Active personal fork. The pipeline works end-to-end: hotkey → WhisperKit → Qwen 2.5 (or Gemma 4) → paste, fully offline. What's still rough:
 
 - The setup wizard still has some leftover phrasing from the cloud-era onboarding; a rewrite is queued
 - The rebrand from "FreeFlow" → "GemmaFlow" is not fully propagated in UI strings yet
@@ -242,7 +245,8 @@ See [docs/analysis/PLAN.md](docs/analysis/PLAN.md) for what's next.
 - [**FreeFlow**](https://github.com/zachlatta/freeflow) by Zach Latta — the UX, the dictation scaffolding, the clever context-aware prompting. This fork is a remix, not a rewrite.
 - [**WhisperKit**](https://github.com/argmaxinc/WhisperKit) by Argmax — on-device speech recognition on the Neural Engine.
 - [**MLX Swift**](https://github.com/ml-explore/mlx-swift) by Apple and [**mlx-swift-examples**](https://github.com/ml-explore/mlx-swift-examples) — native LLM inference on Apple Silicon.
-- [**Gemma**](https://ai.google.dev/gemma) by Google DeepMind — the cleanup model.
+- [**Qwen 2.5**](https://qwen.readthedocs.io/) by Alibaba Cloud (quantized for MLX by [mlx-community](https://huggingface.co/mlx-community)) — the default cleanup model.
+- [**Gemma**](https://ai.google.dev/gemma) by Google DeepMind — alternative cleanup model.
 
 ---
 
