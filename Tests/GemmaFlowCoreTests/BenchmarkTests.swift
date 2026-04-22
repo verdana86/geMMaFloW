@@ -32,6 +32,7 @@ struct BenchmarkTests {
         ]
 
         let gemmaChoices: [(label: String, choice: LocalLLMModelChoice)] = [
+            ("Qwen 1.5B", .qwen25_15B4bit),
             ("Gemma E2B", .gemma4E2B4bit),
             ("Gemma E4B", .gemma4E4B4bit)
         ]

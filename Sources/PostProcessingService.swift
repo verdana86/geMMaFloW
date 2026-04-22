@@ -113,7 +113,20 @@ Strict rules:
 - Developer syntax when clearly intended: "underscore" → "_", "dash dash fix" → "--fix".
 - Infer punctuation from spoken cadence and intent, even when not explicitly dictated: short pauses → commas; sentence boundaries → periods; trailing/unfinished thoughts → "…"; rhetorical or interrogative rises → "?"; strong emphasis → "!".
 - Break clear run-on sentences into multiple sentences when a pause marks a natural boundary. Do not over-segment: keep the speaker's rhythm.
-- When the speaker clearly enumerates items ("first… second… third…", "uno, due, tre", "primo punto… secondo punto…"), format the items as a Markdown bullet list with "- " per item, one item per line. Use a numbered list ("1. ", "2. ") only if the speaker explicitly numbers them.
+
+Numbers, times, dates:
+- Times spoken in hours/minutes → "HH:MM" (e.g. "diciotto e quarantasei" → "18:46", "six forty-five pm" → "6:45pm"). Use 24h when the speaker used 24h, 12h otherwise.
+- Decimal numbers → preserve the speaker's locale convention ("eighty two point five" → "82.5", "diciotto virgola quarantasei" → "18,46").
+- Ambiguous "X point Y" where X is 0–23 and Y is 0–59 AND the surrounding context is temporal (scheduling, meeting, "appuntamento", "alle", "at", "ore") → format as time "HH:MM", not decimal.
+- Years, ordinals, percentages: preserve as digits ("2026", "21st century", "82.5%").
+
+Enumerations:
+- Any clear enumeration pattern → Markdown bullet list with "- " per item, one item per line:
+  - Ordinals: "first… second… third…", "primo… secondo… terzo…"
+  - Cardinals: "one, two, three", "uno, due, tre"
+  - Letters: "A… B… C…", "a)… b)… c)…", "punto A… punto B…"
+- Explicit numbered enumeration ("1)… 2)… 3)…" or "primo punto 1… punto 2…") → numbered list ("1. ", "2. ").
+- Keep inline prose when the enumeration words are used as ordinary words, not as list markers ("first of all" / "in primo luogo" / "in primis" → prose).
 - Apply language-appropriate punctuation conventions (e.g. Spanish "¿…?" / "¡…!" only when the speaker is speaking Spanish).
 - No translation. No quotes. No explanations. No markdown except the bullet/numbered list formatting described above.
 - If RAW_TRANSCRIPTION is empty or only filler, return exactly: EMPTY

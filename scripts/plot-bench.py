@@ -26,14 +26,18 @@ OUT_DIR = REPO_ROOT / "bench" / "charts"
 LENGTH_SECONDS = {"20s": 20, "40s": 40, "60s": 60, "full": 81}
 LENGTH_ORDER = ["20s", "40s", "60s", "full"]
 COMBO_ORDER = [
+    ("Whisper Small", "Qwen 1.5B"),
     ("Whisper Small", "Gemma E2B"),
     ("Whisper Small", "Gemma E4B"),
+    ("Whisper Large", "Qwen 1.5B"),
     ("Whisper Large", "Gemma E2B"),
     ("Whisper Large", "Gemma E4B"),
 ]
 COMBO_COLORS = {
+    ("Whisper Small", "Qwen 1.5B"): "#FF9800",
     ("Whisper Small", "Gemma E2B"): "#4CAF50",
     ("Whisper Small", "Gemma E4B"): "#8BC34A",
+    ("Whisper Large", "Qwen 1.5B"): "#E91E63",
     ("Whisper Large", "Gemma E2B"): "#2196F3",
     ("Whisper Large", "Gemma E4B"): "#0D47A1",
 }
@@ -44,7 +48,7 @@ def parse_results() -> list[dict]:
     rows = []
     table_re = re.compile(
         r"^\|\s*(20s|40s|60s|full)\s*\|\s*(Whisper Small|Whisper Large)\s*\|"
-        r"\s*(Gemma E2B|Gemma E4B)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|",
+        r"\s*(Qwen 1\.5B|Gemma E2B|Gemma E4B)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|",
         re.MULTILINE,
     )
     for m in table_re.finditer(text):

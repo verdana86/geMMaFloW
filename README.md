@@ -159,7 +159,7 @@ More detail in [docs/PRIVACY.md](docs/PRIVACY.md).
 
 ## Performance
 
-geMMaFloW ships two Whisper variants (Small, Large-v3) and two Gemma variants (E2B, E4B) — four combinations to trade off speed and quality. The matrix below comes from a reproducible benchmark (`scripts/run-bench.sh`) on a single Apple Silicon laptop with TTS-generated audio (macOS `say`, voice Samantha). Same audio clip trimmed to 20 s / 40 s / 60 s / 81 s so you can see how each pipeline scales with length.
+geMMaFloW ships two Whisper variants (Small, Large-v3) and three cleanup LLMs (Qwen 2.5 1.5B, Gemma 4 E2B, Gemma 4 E4B) — six combinations to trade off speed and quality. The matrix below comes from a reproducible benchmark (`scripts/run-bench.sh`) on a single Apple Silicon laptop with TTS-generated audio (macOS `say`, voice Samantha). Same audio clip trimmed to 20 s / 40 s / 60 s / 81 s so you can see how each pipeline scales with length.
 
 ### Total latency per pipeline (Whisper transcribe + Gemma cleanup)
 
@@ -175,20 +175,20 @@ Light bars = Whisper transcription, solid bars = Gemma post-processing. Whisper 
   <img src="docs/benchmark/realtime-factor.png" width="850" alt="Realtime factor by combo and audio length">
 </p>
 
-Below the red line = faster than real-time. On 60 s and 81 s clips every combo hits ~0.7–1.0× realtime, so the cleaned transcript lands within about the same wall-clock time as the clip you dictated.
+Below the red line = faster than real-time. On 81 s clips, **Whisper Large + Qwen 1.5B hits 0.28×** — the cleaned transcript lands in under 23 s for 81 s of audio, roughly 3.6× faster than the clip itself.
 
 ### Pick by use case
 
 | Use case | Combo | Trade-off |
 |---|---|---|
-| **Default (best quality)** | Whisper Large + Gemma E4B | Accurate technical vocabulary + natural punctuation. ~70 s on an 81 s clip. |
-| **Fast on modest machines** | Whisper Small + Gemma E2B | Small mis-hears rare terms (e.g. `metallib` → `Metallab`, `latency` → `agency`). E2B strips commas. |
-| **Balanced** | Whisper Large + Gemma E2B | Correct transcription, aggressive cleanup (sometimes too aggressive on punctuation). |
+| **Default** | Whisper Large + Qwen 1.5B | Accurate transcription + fast, natural cleanup. 0.28× realtime on 81 s (~23 s). |
+| **Lightest** | Whisper Small + Qwen 1.5B | Smallest RAM + disk footprint (~2 GB total). Small mis-hears rare terms (`metallib` → `Metallab`, `latency` → `agency`). |
+| **Higher-quality cleanup** | Whisper Large + Gemma E2B / E4B | Sometimes produces more natural punctuation than Qwen on tricky dictation, at 2-4× the latency. Pick if you dictate long mixed-language text. |
 | **Avoid** | Whisper Small + Gemma E4B | E4B can't rescue what Small mis-heard; you pay Gemma's full cost without the quality win. |
 
-All sample transcripts per combo are in [docs/benchmark/results.md](docs/benchmark/results.md). Reproduce with `scripts/run-bench.sh` (downloads all four models first, then runs the matrix — takes ~20 min cold, ~5 min warm).
+All sample transcripts per combo are in [docs/benchmark/results.md](docs/benchmark/results.md). Reproduce with `scripts/run-bench.sh` (downloads all six models first, then runs the matrix — takes ~35 min cold, ~10 min warm).
 
-**Caveats**: Gemma timings are noisy across runs. The primed KV cache (from the warmup phase) boosts the first post-warmup call, and MLX memory pressure with both E2B and E4B resident simultaneously can force swaps. For production-grade numbers you want N≥3 runs per cell with the non-target Gemma variant evicted — the current chart is representative enough to choose a combo, but don't read three-digit-millisecond differences as meaningful.
+**Caveats**: LLM timings are noisy across runs. The primed KV cache (from the warmup phase) boosts the first post-warmup call, and MLX memory pressure with three LLMs resident simultaneously can force swaps — in particular the bench loads Qwen + E2B + E4B together, which makes every call worst-case. In real use you only have one LLM loaded at a time, so expect Qwen's latency in-app to be even lower than the chart suggests. For production-grade numbers you want N≥3 runs per cell with the non-target LLM variants evicted.
 
 ---
 

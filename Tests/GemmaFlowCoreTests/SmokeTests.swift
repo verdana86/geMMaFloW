@@ -9,9 +9,9 @@ struct SmokeTests {
         #expect(AppState.defaultTranscriptionBaseURL == "local://whisperkit/openai_whisper-large-v3-v20240930")
     }
 
-    @Test("Default LLM URL points to bundled Gemma 4 E4B (local-first)")
+    @Test("Default LLM URL points to bundled Qwen 2.5 1.5B (local-first)")
     func defaultLLMIsLocal() {
-        #expect(AppState.defaultLLMBaseURL == "local://mlx/mlx-community/gemma-4-e4b-it-4bit")
+        #expect(AppState.defaultLLMBaseURL == "local://mlx/mlx-community/Qwen2.5-1.5B-Instruct-4bit")
     }
 
     @Test("Local-only post-processing service initialises without a baseURL")

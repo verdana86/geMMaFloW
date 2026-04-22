@@ -199,8 +199,13 @@ final class AppState: ObservableObject, @unchecked Sendable {
     @Published var postProcessingEnabled: Bool {
         didSet {
             UserDefaults.standard.set(postProcessingEnabled, forKey: postProcessingEnabledStorageKey)
-            if postProcessingEnabled && !oldValue {
-                // Flipping on → pre-warm so the next dictation is fast.
+            // During the Setup wizard the Download step drives loads
+            // explicitly — kicking an auto-warmup here would load the
+            // *previous* default model (e.g. Gemma E4B, 5 GB) before the
+            // user has a chance to pick Qwen, and both would race in
+            // parallel for MLX memory. Only pre-warm once setup is done,
+            // when llmBaseURL already reflects the user's choice.
+            if postProcessingEnabled && !oldValue && hasCompletedSetup {
                 warmupBackends()
             }
         }

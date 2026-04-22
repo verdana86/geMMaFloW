@@ -11,8 +11,13 @@ enum LocalLLMModelChoice: String, CaseIterable, Identifiable {
     case gemma4E4B4bit
 
     /// Default when the user opts into local LLM without picking a preset.
-    /// E4B is the best quality at an acceptable ~5 GB on disk.
-    static let `default`: LocalLLMModelChoice = .gemma4E4B4bit
+    /// Qwen 2.5 1.5B is ~6× smaller than Gemma 4 E4B and post-processes
+    /// typical dictation in well under a second on Apple Silicon, vs
+    /// Gemma E4B's multi-second runs. Quality is comparable for the
+    /// narrow "strip fillers, fix punctuation" task the pipeline needs,
+    /// so we favor the lighter default and surface Gemma as the
+    /// "higher-quality, slower" opt-in.
+    static let `default`: LocalLLMModelChoice = .qwen25_15B4bit
 
     var id: String { rawValue }
 

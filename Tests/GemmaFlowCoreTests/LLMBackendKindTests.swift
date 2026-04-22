@@ -58,9 +58,9 @@ struct LLMBackendKindTests {
 
 @Suite("LocalLLMModelChoice — curated bundled LLM presets")
 struct LocalLLMModelChoiceTests {
-    @Test("Default is Gemma 4 E4B 4-bit (~3.8GB on disk)")
-    func defaultIsE4B() {
-        #expect(LocalLLMModelChoice.default == .gemma4E4B4bit)
+    @Test("Default is Qwen 2.5 1.5B 4-bit (~870 MB on disk)")
+    func defaultIsQwen() {
+        #expect(LocalLLMModelChoice.default == .qwen25_15B4bit)
     }
 
     @Test("Each preset encodes the right HuggingFace repo id")

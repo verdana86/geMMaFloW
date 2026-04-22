@@ -514,10 +514,10 @@ struct SetupView: View {
                 }
 
                 modelPickerCard(
-                    title: "Post-processing (Gemma)",
+                    title: "Post-processing (cleanup model)",
                     subtitle: "Cleans up the raw transcript — fixes punctuation, filler words, duplicates. Adds ~1-2s of latency per dictation."
                 ) {
-                    Toggle("Use Gemma to clean up transcripts", isOn: $useGemmaInSetup)
+                    Toggle("Enable transcript cleanup", isOn: $useGemmaInSetup)
                         .toggleStyle(.switch)
                         .disabled(downloadsKickedOff)
 
@@ -539,6 +539,11 @@ struct SetupView: View {
                             error: llmDownloadError ?? llmDownloads.errorMessage,
                             hideIfIdle: !downloadsKickedOff
                         )
+                    } else {
+                        Text("Turn on to choose a cleanup model (Qwen 2.5 1.5B, Gemma 4 E2B, or Gemma 4 E4B).")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
